@@ -34,12 +34,16 @@ main (int argc, char* argv[])
     {
         static_assert(AMREX_SPACEDIM == 2);
 
+        run_mlabeclap_amg_checks();
+
         int cloud_anderson_depth = 7;
         int cloud_fine_n = 128;
         Real cloud_anderson_beta = Real(1);
         int cloud_iteration_output = 1;
         int cloud_flux_limiter = 1;
         int cloud_only = 0;
+        int front_only = 0;
+        int solver_checks_only = 0;
         std::string cloud_case = "both";
         std::string cloud_plotfile_prefix;
         {
@@ -50,8 +54,37 @@ main (int argc, char* argv[])
             pp.query("cloud_iteration_output", cloud_iteration_output);
             pp.query("cloud_flux_limiter", cloud_flux_limiter);
             pp.query("cloud_only", cloud_only);
+            pp.query("front_only", front_only);
+            pp.query("solver_checks_only", solver_checks_only);
             pp.query("cloud_case", cloud_case);
             pp.query("cloud_plotfile_prefix", cloud_plotfile_prefix);
+        }
+
+        if (solver_checks_only != 0) {
+            amrex::Finalize();
+            return 0;
+        }
+
+        if (front_only != 0) {
+            auto const front = run_limited_front();
+            amrex::Print() << "FLD limited front: cells=" << front.cells
+                           << ", front/causal radius=" << front.front_radius
+                           << "/" << front.causal_radius
+                           << ", far excess=" << front.far_excess
+                           << ", unlimited far excess="
+                           << front.unlimited_far_excess
+                           << ", max |F|/(cE)="
+                           << front.maximum_flux_fraction << ", E range=["
+                           << front.minimum_energy << ","
+                           << front.maximum_energy << "]"
+                           << ", Picard total/max/change="
+                           << front.total_picard_iterations << "/"
+                           << front.maximum_picard_iterations << "/"
+                           << front.final_picard_change << ", ";
+            print_solver_summary(front.solver);
+            amrex::Print() << '\n';
+            amrex::Finalize();
+            return 0;
         }
 
         if (cloud_only != 0) {

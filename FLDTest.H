@@ -77,6 +77,8 @@ CloudResult run_cloud (bool use_amr, int fine_n, int anderson_depth,
 
 FrontResult run_limited_front ();
 
+void run_mlabeclap_amg_checks ();
+
 } // namespace fld_test
 
 #endif

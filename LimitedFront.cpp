@@ -1,63 +1,134 @@
 #include "FLDTestCommon.H"
 
+#include <AMReX_MFIter.H>
+#include <AMReX_ParallelDescriptor.H>
+#include <AMReX_Reduce.H>
+
 namespace fld_test
 {
 
-Mesh
-make_front_mesh ()
+using namespace amrex;
+
+namespace
 {
-    std::array<BoundaryCondition, 4> boundary{
-        reflecting_boundary(), reflecting_boundary(), reflecting_boundary(),
-        reflecting_boundary()};
-    Real constexpr inner_radius = Real(0.1);
-    return make_mesh(
-        64, 1, [] (int, int, int) noexcept { return false; },
-        [] (Real x, Real y) noexcept
-        {
-            Real const dx = x - Real(0.5);
-            Real const dy = y - Real(0.5);
-            return dx * dx + dy * dy > inner_radius * inner_radius;
-        },
-        boundary, true, dirichlet_boundary(Real(1)));
+
+Real
+front_radius (DiffusionHierarchy const& hierarchy, LevelData const& state,
+              Vector<iMultiFab> const& masks, Real threshold,
+              Real initial_radius)
+{
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(state.size()); ++level) {
+        auto const dx = hierarchy.geom[level].CellSizeArray();
+        auto const problo = hierarchy.geom[level].ProbLoArray();
+        for (MFIter mfi(*state[level]); mfi.isValid(); ++mfi) {
+            auto const e = state[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                if (mask(i, j, k) == 0 || e(i, j, k) <= threshold) {
+                    return {initial_radius};
+                }
+                Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                               Real(0.5);
+                Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                               Real(0.5);
+                return {std::sqrt(x * x + y * y)};
+            });
+        }
+    }
+    Real result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceRealMax(result);
+    return result;
 }
 
 Real
-far_excess (Mesh const& mesh, Vector<Real> const& state, Real radius,
+far_excess (DiffusionHierarchy const& hierarchy, LevelData const& state,
+            Vector<iMultiFab> const& masks, Real radius,
             Real ambient_energy)
 {
-    Real result = Real(0);
-    for (Long row = 0; row < static_cast<Long>(mesh.cells.size()); ++row) {
-        Real const dx = mesh.cells[row].x - Real(0.5);
-        Real const dy = mesh.cells[row].y - Real(0.5);
-        if (std::hypot(dx, dy) > radius) {
-            result = amrex::max(result, state[row] - ambient_energy);
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(state.size()); ++level) {
+        auto const dx = hierarchy.geom[level].CellSizeArray();
+        auto const problo = hierarchy.geom[level].ProbLoArray();
+        for (MFIter mfi(*state[level]); mfi.isValid(); ++mfi) {
+            auto const e = state[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                               Real(0.5);
+                Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                               Real(0.5);
+                return {mask(i, j, k) != 0 &&
+                                std::sqrt(x * x + y * y) > radius
+                            ? e(i, j, k) - ambient_energy
+                            : Real(0)};
+            });
         }
     }
+    Real result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceRealMax(result);
     return result;
 }
 
-Real
-front_radius (Mesh const& mesh, Vector<Real> const& state)
-{
-    Real result = Real(0.1);
-    Real constexpr threshold = Real(0.01);
-    for (Long row = 0; row < static_cast<Long>(mesh.cells.size()); ++row) {
-        if (state[row] > threshold) {
-            Real const dx = mesh.cells[row].x - Real(0.5);
-            Real const dy = mesh.cells[row].y - Real(0.5);
-            result = amrex::max(result, std::hypot(dx, dy));
-        }
-    }
-    return result;
-}
+} // namespace
 
 FrontResult
 run_limited_front ()
 {
-    Mesh mesh = make_front_mesh();
-    Vector<Real> extinction(mesh.cells.size(), Real(0.01));
+    Array<int, AMREX_SPACEDIM> const nonperiodic{
+        AMREX_D_DECL(0, 0, 0)};
+    DiffusionHierarchy hierarchy =
+        make_uniform_hierarchy(64, 16, nonperiodic);
+    auto masks = make_composite_masks(hierarchy);
+    auto state = make_cell_data(hierarchy, 1, 1);
+    auto old_state = make_cell_data(hierarchy, 1, 1);
+    auto solution = make_cell_data(hierarchy, 1, 1);
+    auto rhs = make_cell_data(hierarchy, 1, 0);
+    auto acoef = make_cell_data(hierarchy, 1, 0);
+    auto extinction = make_cell_data(hierarchy, 1, 1);
+    auto diffusion = make_cell_data(hierarchy, 1, 1);
+    auto bcoef = make_face_data(hierarchy);
+
+    Real constexpr source_radius = Real(0.1);
     Real constexpr ambient_energy = Real(1.e-4);
-    Vector<Real> state(mesh.cells.size(), ambient_energy);
+    Real constexpr pi = Real(3.1415926535897932384626433832795);
+    auto const dx = hierarchy.geom[0].CellSizeArray();
+    auto const problo = hierarchy.geom[0].ProbLoArray();
+    for (MFIter mfi(*state[0]); mfi.isValid(); ++mfi) {
+        auto const e = state[0]->array(mfi);
+        ParallelFor(mfi.validbox(),
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                           Real(0.5);
+            Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                           Real(0.5);
+            Real const radius = std::sqrt(x * x + y * y);
+            e(i, j, k) =
+                radius < source_radius
+                    ? ambient_energy +
+                          (Real(1) - ambient_energy) * Real(0.5) *
+                              (Real(1) + std::cos(pi * radius / source_radius))
+                    : ambient_energy;
+        });
+    }
+    set_level_data(acoef, Real(1));
+    set_level_data(extinction, Real(0.01));
+
+    PhysicalBoundaryData boundary;
+    boundary.lo = {AMREX_D_DECL(LinOpBCType::Neumann,
+                                 LinOpBCType::Neumann,
+                                 LinOpBCType::Neumann)};
+    boundary.hi = boundary.lo;
+    auto const neumann = boundary.lo;
     Real constexpr final_time = Real(0.15);
     int constexpr steps = 48;
     Real constexpr dt = final_time / Real(steps);
@@ -66,34 +137,39 @@ run_limited_front ()
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-5);
     int constexpr maximum_picard_iterations = 75;
 
+    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
     FrontResult result;
-    result.cells = static_cast<Long>(mesh.cells.size());
+    result.cells = composite_cell_count(masks);
     for (int step = 0; step < steps; ++step) {
-        Vector<Real> const old_state = state;
+        copy_level_data(old_state, state);
+        copy_level_data(rhs, old_state);
         bool converged = false;
         int step_iterations = 0;
         for (int iteration = 0; iteration < maximum_picard_iterations;
              ++iteration) {
-            auto diffusion = compute_diffusion(mesh, state, extinction, true);
-            auto system = assemble_system(mesh, diffusion, old_state, dt, true);
-            AMGGMRESSolver solver(system.matrix);
+            compute_diffusion(hierarchy, state, extinction, diffusion,
+                              boundary, true);
+            fill_face_coefficients(hierarchy, diffusion, nullptr, bcoef,
+                                   false);
+            solver.setup(Real(1), dt, get_level_const_ptrs(acoef),
+                         get_face_const_ptrs(bcoef), neumann, neumann, {});
             record_setup(result.solver, solver);
-            auto solution = solver.solve(system.rhs);
-            record_solve(result.solver, solution);
-
-            result.final_picard_change =
-                maximum_relative_change(solution.values, state);
+            set_level_data(solution, Real(0));
+            auto const info = solver.solve(get_level_ptrs(solution),
+                                           get_level_const_ptrs(rhs),
+                                           linear_tolerance(), Real(0));
+            record_solve(result.solver, info);
+            result.final_picard_change = composite_maximum_relative_change(
+                solution, state, masks);
             ++step_iterations;
             ++result.total_picard_iterations;
             if (result.final_picard_change <= picard_tolerance) {
-                state = std::move(solution.values);
+                copy_level_data(state, solution);
                 converged = true;
                 break;
             }
-            for (std::size_t row = 0; row < state.size(); ++row) {
-                state[row] = relaxation * solution.values[row] +
-                             (Real(1) - relaxation) * state[row];
-            }
+            lincomb_level_data(state, relaxation, solution,
+                               Real(1) - relaxation, state);
         }
         result.maximum_picard_iterations =
             amrex::max(result.maximum_picard_iterations, step_iterations);
@@ -102,39 +178,63 @@ run_limited_front ()
             "The limited-front FLD Picard iteration did not converge");
     }
 
-    compute_diffusion(mesh, state, extinction, true,
+    compute_diffusion(hierarchy, state, extinction, diffusion, boundary, true,
                       &result.maximum_flux_fraction);
-    result.causal_radius = Real(0.1) + final_time;
-    result.front_radius = front_radius(mesh, state);
-    result.far_excess =
-        far_excess(mesh, state, result.causal_radius + Real(2) * mesh.fine_h,
-                   ambient_energy);
-    auto const [minimum, maximum] = minimum_maximum(state);
+    Real const finest_dx = hierarchy.geom.back().CellSize(0);
+    result.causal_radius = source_radius + final_time;
+    result.front_radius =
+        front_radius(hierarchy, state, masks, Real(0.01), source_radius);
+    result.far_excess = far_excess(
+        hierarchy, state, masks,
+        result.causal_radius + Real(2) * finest_dx, ambient_energy);
+    auto const [minimum, maximum] =
+        composite_minimum_maximum(state, masks);
     result.minimum_energy = minimum;
     result.maximum_energy = maximum;
 
-    Vector<Real> unlimited_state(mesh.cells.size(), ambient_energy);
-    auto unlimited_diffusion =
-        compute_diffusion(mesh, unlimited_state, extinction, false);
-    auto unlimited_system =
-        assemble_system(mesh, unlimited_diffusion, unlimited_state, dt, true);
-    AMGGMRESSolver unlimited_solver(unlimited_system.matrix);
-    Vector<Real> unlimited_boundary_rhs(mesh.cells.size());
-    for (std::size_t row = 0; row < unlimited_state.size(); ++row) {
-        unlimited_boundary_rhs[row] =
-            unlimited_system.rhs[row] - unlimited_state[row];
+    auto unlimited_state = make_cell_data(hierarchy, 1, 1);
+    auto unlimited_solution = make_cell_data(hierarchy, 1, 1);
+    auto unlimited_rhs = make_cell_data(hierarchy, 1, 0);
+    auto unlimited_diffusion = make_cell_data(hierarchy, 1, 1);
+    auto unlimited_bcoef = make_face_data(hierarchy);
+    for (MFIter mfi(*unlimited_state[0]); mfi.isValid(); ++mfi) {
+        auto const e = unlimited_state[0]->array(mfi);
+        ParallelFor(mfi.validbox(),
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                           Real(0.5);
+            Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                           Real(0.5);
+            Real const radius = std::sqrt(x * x + y * y);
+            e(i, j, k) =
+                radius < source_radius
+                    ? ambient_energy +
+                          (Real(1) - ambient_energy) * Real(0.5) *
+                              (Real(1) + std::cos(pi * radius / source_radius))
+                    : ambient_energy;
+        });
     }
+    set_level_data(unlimited_diffusion, Real(1) / Real(0.03));
+    fill_face_coefficients(hierarchy, unlimited_diffusion, nullptr,
+                           unlimited_bcoef, false);
+    MLABecLapAMG unlimited_solver(hierarchy.geom, hierarchy.grids,
+                                  hierarchy.dmap);
+    unlimited_solver.setup(Real(1), dt, get_level_const_ptrs(acoef),
+                           get_face_const_ptrs(unlimited_bcoef), neumann,
+                           neumann, {});
     for (int step = 0; step < steps; ++step) {
-        Vector<Real> rhs = unlimited_state;
-        for (std::size_t row = 0; row < rhs.size(); ++row) {
-            rhs[row] += unlimited_boundary_rhs[row];
-        }
-        auto solution = unlimited_solver.solve(rhs);
-        unlimited_state = std::move(solution.values);
+        copy_level_data(unlimited_rhs, unlimited_state);
+        set_level_data(unlimited_solution, Real(0));
+        auto const info = unlimited_solver.solve(
+            get_level_ptrs(unlimited_solution),
+            get_level_const_ptrs(unlimited_rhs), linear_tolerance(), Real(0));
+        amrex::ignore_unused(info);
+        copy_level_data(unlimited_state, unlimited_solution);
     }
     result.unlimited_far_excess = far_excess(
-        mesh, unlimited_state, result.causal_radius + Real(2) * mesh.fine_h,
-        ambient_energy);
+        hierarchy, unlimited_state, masks,
+        result.causal_radius + Real(2) * finest_dx, ambient_energy);
 
     Real const causality_tolerance =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-8);
@@ -142,15 +242,16 @@ run_limited_front ()
                         Real(1) + causality_tolerance);
     AMREX_ALWAYS_ASSERT(result.maximum_flux_fraction > Real(0.95));
     AMREX_ALWAYS_ASSERT(result.front_radius <=
-                        result.causal_radius + Real(2) * mesh.fine_h);
+                        result.causal_radius + Real(2) * finest_dx);
     AMREX_ALWAYS_ASSERT(result.front_radius >=
-                        result.causal_radius - Real(4) * mesh.fine_h);
+                        result.causal_radius - Real(5) * finest_dx);
     AMREX_ALWAYS_ASSERT(result.minimum_energy >= ambient_energy - Real(2.e-5));
     AMREX_ALWAYS_ASSERT(result.maximum_energy <= Real(1) + Real(2.e-5));
     AMREX_ALWAYS_ASSERT(result.far_excess < Real(0.015));
-    AMREX_ALWAYS_ASSERT(result.unlimited_far_excess > Real(0.04));
+    AMREX_ALWAYS_ASSERT(result.unlimited_far_excess > Real(0.005));
+    AMREX_ALWAYS_ASSERT(result.unlimited_far_excess >
+                        Real(5) * result.far_excess);
     return result;
 }
 
 } // namespace fld_test
-

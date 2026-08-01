@@ -29,7 +29,7 @@ class DenseMatrixOperator
           m_inverse_diagonal(m_matrix.size(), Real(1))
     {
         AMREX_ALWAYS_ASSERT(!m_matrix.empty());
-        for (std::size_t i = 0; i < m_matrix.size(); ++i) {
+        for (Long i = 0; i < m_matrix.size(); ++i) {
             AMREX_ALWAYS_ASSERT(m_matrix[i].size() == m_matrix.size());
             AMREX_ALWAYS_ASSERT(m_matrix[i][i] > Real(0));
             m_inverse_diagonal[i] = Real(1) / m_matrix[i][i];
@@ -41,8 +41,8 @@ class DenseMatrixOperator
     {
         AMREX_ALWAYS_ASSERT(rhs.size() == m_matrix.size());
         lhs.assign(m_matrix.size(), Real(0));
-        for (std::size_t i = 0; i < m_matrix.size(); ++i) {
-            for (std::size_t j = 0; j < m_matrix.size(); ++j) {
+        for (Long i = 0; i < m_matrix.size(); ++i) {
+            for (Long j = 0; j < m_matrix.size(); ++j) {
                 lhs[i] += m_matrix[i][j] * rhs[j];
             }
         }
@@ -66,7 +66,7 @@ class DenseMatrixOperator
     increment (Vector<Real>& lhs, Vector<Real> const& rhs, Real scale)
     {
         AMREX_ALWAYS_ASSERT(lhs.size() == rhs.size());
-        for (std::size_t i = 0; i < lhs.size(); ++i) {
+        for (Long i = 0; i < lhs.size(); ++i) {
             lhs[i] += scale * rhs[i];
         }
     }
@@ -78,7 +78,7 @@ class DenseMatrixOperator
     {
         AMREX_ALWAYS_ASSERT(lhs_vector.size() == rhs_vector.size());
         lhs.resize(lhs_vector.size());
-        for (std::size_t i = 0; i < lhs.size(); ++i) {
+        for (Long i = 0; i < lhs.size(); ++i) {
             lhs[i] =
                 lhs_scale * lhs_vector[i] + rhs_scale * rhs_vector[i];
         }
@@ -107,7 +107,7 @@ class DenseMatrixOperator
     {
         AMREX_ALWAYS_ASSERT(rhs.size() == m_inverse_diagonal.size());
         lhs.resize(rhs.size());
-        for (std::size_t i = 0; i < rhs.size(); ++i) {
+        for (Long i = 0; i < rhs.size(); ++i) {
             lhs[i] = m_inverse_diagonal[i] * rhs[i];
         }
     }
@@ -159,47 +159,44 @@ solve_anderson_coefficients (Vector<Vector<Real>> matrix,
 
 } // namespace
 
-AndersonMixer::AndersonMixer (int depth, Real beta, Vector<Real> weights,
-                              Real upper_bound)
-    : m_depth(depth), m_beta(beta), m_weights(std::move(weights)),
-      m_upper_bound(upper_bound)
+AndersonMixer::AndersonMixer (
+    DiffusionHierarchy const& hierarchy,
+    Vector<iMultiFab> const& composite_masks, int depth, Real beta,
+    Real upper_bound)
+    : m_hierarchy(&hierarchy), m_masks(&composite_masks), m_depth(depth),
+      m_beta(beta), m_upper_bound(upper_bound)
 {
     AMREX_ALWAYS_ASSERT(m_depth >= 0);
     AMREX_ALWAYS_ASSERT(m_beta > Real(0));
     AMREX_ALWAYS_ASSERT(m_beta <= Real(1));
     AMREX_ALWAYS_ASSERT(m_upper_bound > Real(0));
-    AMREX_ALWAYS_ASSERT(!m_weights.empty());
-    AMREX_ALWAYS_ASSERT(std::all_of(
-        m_weights.begin(), m_weights.end(),
-        [] (Real weight) noexcept { return weight > Real(0); }));
+    AMREX_ALWAYS_ASSERT(m_hierarchy->geom.size() == m_masks->size());
 }
 
-Vector<Real>
-AndersonMixer::update (Vector<Real> const& state,
-                       Vector<Real> const& fixed_point)
+void
+AndersonMixer::update (LevelData& state, LevelData const& fixed_point)
 {
-    AMREX_ALWAYS_ASSERT(state.size() == m_weights.size());
-    AMREX_ALWAYS_ASSERT(fixed_point.size() == state.size());
-
-    Vector<Real> residual(state.size());
-    Vector<Real> picard_state(state.size());
-    for (std::size_t i = 0; i < state.size(); ++i) {
-        residual[i] = fixed_point[i] - state[i];
-        picard_state[i] = state[i] + m_beta * residual[i];
-    }
+    LevelData residual = clone_level_data(fixed_point);
+    saxpy_level_data(residual, Real(-1), state);
+    LevelData picard_state = clone_level_data(state);
+    saxpy_level_data(picard_state, m_beta, residual);
     if (m_depth == 0) {
-        return picard_state;
+        copy_level_data(state, picard_state);
+        average_down_hierarchy(state, *m_hierarchy);
+        return;
     }
 
     Real const residual_norm = weighted_norm(residual);
     if (!m_residuals.empty() &&
         residual_norm > Real(2) * weighted_norm(m_residuals.back())) {
         restart(state, residual);
-        return picard_state;
+        copy_level_data(state, picard_state);
+        average_down_hierarchy(state, *m_hierarchy);
+        return;
     }
 
-    m_states.push_back(state);
-    m_residuals.push_back(residual);
+    m_states.push_back(clone_level_data(state));
+    m_residuals.push_back(clone_level_data(residual));
     while (static_cast<int>(m_states.size()) > m_depth + 1) {
         m_states.erase(m_states.begin());
         m_residuals.erase(m_residuals.begin());
@@ -207,20 +204,23 @@ AndersonMixer::update (Vector<Real> const& state,
 
     int const difference_count = static_cast<int>(m_states.size()) - 1;
     if (difference_count == 0) {
-        return picard_state;
+        copy_level_data(state, picard_state);
+        average_down_hierarchy(state, *m_hierarchy);
+        return;
     }
 
-    Vector<Vector<Real>> state_differences(
-        difference_count, Vector<Real>(state.size()));
-    Vector<Vector<Real>> residual_differences(
-        difference_count, Vector<Real>(state.size()));
+    Vector<LevelData> state_differences;
+    Vector<LevelData> residual_differences;
+    state_differences.reserve(difference_count);
+    residual_differences.reserve(difference_count);
     for (int column = 0; column < difference_count; ++column) {
-        for (std::size_t i = 0; i < state.size(); ++i) {
-            state_differences[column][i] =
-                m_states[column + 1][i] - m_states[column][i];
-            residual_differences[column][i] =
-                m_residuals[column + 1][i] - m_residuals[column][i];
-        }
+        state_differences.push_back(clone_level_data(m_states[column + 1]));
+        saxpy_level_data(state_differences.back(), Real(-1),
+                         m_states[column]);
+        residual_differences.push_back(
+            clone_level_data(m_residuals[column + 1]));
+        saxpy_level_data(residual_differences.back(), Real(-1),
+                         m_residuals[column]);
     }
 
     Vector<Vector<Real>> normal_matrix(
@@ -249,29 +249,28 @@ AndersonMixer::update (Vector<Real> const& state,
     if (!solve_anderson_coefficients(std::move(normal_matrix), normal_rhs,
                                      coefficients)) {
         restart(state, residual);
-        return picard_state;
+        copy_level_data(state, picard_state);
+        average_down_hierarchy(state, *m_hierarchy);
+        return;
     }
 
-    Vector<Real> candidate = picard_state;
+    LevelData candidate = clone_level_data(picard_state);
     // Type-II Anderson update:
     // x_{k+1} = x_k + beta f_k - (Delta X + beta Delta F) gamma.
     for (int column = 0; column < difference_count; ++column) {
-        for (std::size_t i = 0; i < candidate.size(); ++i) {
-            candidate[i] -= coefficients[column] *
-                            (state_differences[column][i] +
-                             m_beta * residual_differences[column][i]);
-        }
+        LevelData correction = clone_level_data(state_differences[column]);
+        saxpy_level_data(correction, m_beta, residual_differences[column]);
+        saxpy_level_data(candidate, -coefficients[column], correction);
     }
 
-    Vector<Real> candidate_step(state.size());
-    Vector<Real> picard_step(state.size());
-    bool physical = true;
-    for (std::size_t i = 0; i < state.size(); ++i) {
-        candidate_step[i] = candidate[i] - state[i];
-        picard_step[i] = picard_state[i] - state[i];
-        physical = physical && std::isfinite(candidate[i]) &&
-                   candidate[i] >= Real(0) && candidate[i] <= m_upper_bound;
-    }
+    LevelData candidate_step = clone_level_data(candidate);
+    saxpy_level_data(candidate_step, Real(-1), state);
+    LevelData picard_step = clone_level_data(picard_state);
+    saxpy_level_data(picard_step, Real(-1), state);
+    auto const [minimum, maximum] =
+        composite_minimum_maximum(candidate, *m_masks);
+    bool const physical = composite_all_finite(candidate, *m_masks) &&
+                          minimum >= Real(0) && maximum <= m_upper_bound;
     Real const picard_step_norm = weighted_norm(picard_step);
     Real const candidate_step_norm = weighted_norm(candidate_step);
     // Reject proposals that violate the radiation maximum principle or take a
@@ -280,11 +279,14 @@ AndersonMixer::update (Vector<Real> const& state,
         candidate_step_norm >
             Real(10) * amrex::max(picard_step_norm, Real(1.e-30))) {
         restart(state, residual);
-        return picard_state;
+        copy_level_data(state, picard_state);
+        average_down_hierarchy(state, *m_hierarchy);
+        return;
     }
 
     ++m_anderson_steps;
-    return candidate;
+    copy_level_data(state, candidate);
+    average_down_hierarchy(state, *m_hierarchy);
 }
 
 int
@@ -300,32 +302,25 @@ AndersonMixer::restarts () const noexcept
 }
 
 Real
-AndersonMixer::weighted_dot (Vector<Real> const& lhs,
-                             Vector<Real> const& rhs) const
+AndersonMixer::weighted_dot (LevelData const& lhs,
+                             LevelData const& rhs) const
 {
-    AMREX_ALWAYS_ASSERT(lhs.size() == m_weights.size());
-    AMREX_ALWAYS_ASSERT(rhs.size() == lhs.size());
-    Real result = Real(0);
-    for (std::size_t i = 0; i < lhs.size(); ++i) {
-        result += m_weights[i] * lhs[i] * rhs[i];
-    }
-    return result;
+    return composite_weighted_dot(lhs, rhs, *m_hierarchy, *m_masks);
 }
 
 Real
-AndersonMixer::weighted_norm (Vector<Real> const& vector) const
+AndersonMixer::weighted_norm (LevelData const& vector) const
 {
     return std::sqrt(amrex::max(weighted_dot(vector, vector), Real(0)));
 }
 
 void
-AndersonMixer::restart (Vector<Real> const& state,
-                        Vector<Real> const& residual)
+AndersonMixer::restart (LevelData const& state, LevelData const& residual)
 {
     m_states.clear();
     m_residuals.clear();
-    m_states.push_back(state);
-    m_residuals.push_back(residual);
+    m_states.push_back(clone_level_data(state));
+    m_residuals.push_back(clone_level_data(residual));
     ++m_restarts;
 }
 

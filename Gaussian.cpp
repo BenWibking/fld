@@ -1,72 +1,124 @@
 #include "FLDTestCommon.H"
 
+#include <AMReX_MFIter.H>
+#include <AMReX_ParallelDescriptor.H>
+#include <AMReX_Reduce.H>
+
 namespace fld_test
 {
+
+using namespace amrex;
 
 GaussianResult
 run_gaussian (bool use_amr)
 {
-    auto periodic = periodic_boundary();
-    std::array<BoundaryCondition, 4> boundary{periodic, periodic, periodic,
-                                              periodic};
+    Array<int, AMREX_SPACEDIM> const periodic{
+        AMREX_D_DECL(1, 1, 1)};
+    DiffusionHierarchy hierarchy =
+        use_amr ? make_centered_patch_hierarchy(32, 2, 16, periodic)
+                : make_uniform_hierarchy(64, 16, periodic);
+    auto masks = make_composite_masks(hierarchy);
+    auto state = make_cell_data(hierarchy, 1, 1);
+    auto solution = make_cell_data(hierarchy, 1, 1);
+    auto rhs = make_cell_data(hierarchy, 1, 0);
+    auto acoef = make_cell_data(hierarchy, 1, 0);
+    auto bcoef = make_face_data(hierarchy);
 
-    int const nbase = use_amr ? 32 : 64;
-    int const ratio = use_amr ? 2 : 1;
-    Mesh mesh = make_mesh(
-        nbase, ratio, [] (int i, int j, int n) noexcept
-        { return i >= n / 4 && i < 3 * n / 4 && j >= n / 4 && j < 3 * n / 4; },
-        [] (Real, Real) noexcept { return true; }, boundary);
-
-    Real constexpr extinction_value = Real(100);
-    Real const diffusion_value = Real(1) / (Real(3) * extinction_value);
+    Real constexpr extinction = Real(100);
+    Real constexpr diffusion = Real(1) / (Real(3) * extinction);
     Real constexpr initial_time = Real(0.4);
     Real constexpr dt = Real(0.005);
     int constexpr steps = 10;
     Real constexpr pi = Real(3.1415926535897932384626433832795);
 
-    auto exact = [&] (Cell const& cell, Real time) -> Real
-    {
-        Real const x = cell.x - Real(0.5);
-        Real const y = cell.y - Real(0.5);
-        Real const radius_squared = x * x + y * y;
-        return std::exp(-radius_squared / (Real(4) * diffusion_value * time)) /
-               (Real(4) * pi * diffusion_value * time);
-    };
-
-    Vector<Real> state(mesh.cells.size());
-    Vector<Real> extinction(mesh.cells.size(), extinction_value);
-    for (Long row = 0; row < static_cast<Long>(mesh.cells.size()); ++row) {
-        state[row] = exact(mesh.cells[row], initial_time);
+    set_level_data(acoef, Real(1));
+    for (auto& level : bcoef) {
+        for (auto& face : level) {
+            face->setVal(diffusion);
+        }
     }
-    Real const initial_energy = std::inner_product(
-        state.begin(), state.end(), mesh.cells.begin(), Real(0), std::plus<>(),
-        [] (Real energy, Cell const& cell) { return energy * cell.volume; });
+    for (int level = 0; level < static_cast<int>(state.size()); ++level) {
+        auto const dx = hierarchy.geom[level].CellSizeArray();
+        auto const problo = hierarchy.geom[level].ProbLoArray();
+        for (MFIter mfi(*state[level]); mfi.isValid(); ++mfi) {
+            auto const array = state[level]->array(mfi);
+            ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                               Real(0.5);
+                Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                               Real(0.5);
+                Real const radius_squared = x * x + y * y;
+                array(i, j, k) =
+                    std::exp(-radius_squared /
+                             (Real(4) * diffusion * initial_time)) /
+                    (Real(4) * pi * diffusion * initial_time);
+            });
+        }
+    }
+    average_down_hierarchy(state, hierarchy);
+    Real const initial_energy =
+        composite_volume_sum(state, hierarchy, masks);
 
-    auto diffusion = compute_diffusion(mesh, state, extinction, false);
-    auto system = assemble_system(mesh, diffusion, state, dt, true);
-    AMGGMRESSolver solver(system.matrix);
+    auto const periodic_bc = Array<LinOpBCType, AMREX_SPACEDIM>{
+        AMREX_D_DECL(LinOpBCType::Periodic, LinOpBCType::Periodic,
+                     LinOpBCType::Periodic)};
+    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
+    solver.setup(Real(1), dt, get_level_const_ptrs(acoef),
+                 get_face_const_ptrs(bcoef), periodic_bc, periodic_bc, {});
+
     GaussianResult result;
-    result.cells = static_cast<Long>(mesh.cells.size());
+    result.cells = composite_cell_count(masks);
     record_setup(result.solver, solver);
-
     for (int step = 0; step < steps; ++step) {
-        auto solution = solver.solve(state);
-        record_solve(result.solver, solution);
-        state = std::move(solution.values);
+        copy_level_data(rhs, state);
+        set_level_data(solution, Real(0));
+        auto const info = solver.solve(get_level_ptrs(solution),
+                                       get_level_const_ptrs(rhs),
+                                       linear_tolerance(), Real(0));
+        record_solve(result.solver, info);
+        copy_level_data(state, solution);
+        average_down_hierarchy(state, hierarchy);
     }
 
     Real const final_time = initial_time + Real(steps) * dt;
-    Real absolute_error = Real(0);
-    Real exact_norm = Real(0);
-    Real final_energy = Real(0);
-    for (Long row = 0; row < static_cast<Long>(mesh.cells.size()); ++row) {
-        Real const reference = exact(mesh.cells[row], final_time);
-        Real const volume = mesh.cells[row].volume;
-        absolute_error += volume * std::abs(state[row] - reference);
-        exact_norm += volume * std::abs(reference);
-        final_energy += volume * state[row];
+    ReduceOps<ReduceOpSum, ReduceOpSum> reduce_op;
+    ReduceData<Real, Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(state.size()); ++level) {
+        auto const dx = hierarchy.geom[level].CellSizeArray();
+        auto const problo = hierarchy.geom[level].ProbLoArray();
+        Real const volume = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
+        for (MFIter mfi(*state[level]); mfi.isValid(); ++mfi) {
+            auto const array = state[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0] -
+                               Real(0.5);
+                Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1] -
+                               Real(0.5);
+                Real const reference =
+                    std::exp(-(x * x + y * y) /
+                             (Real(4) * diffusion * final_time)) /
+                    (Real(4) * pi * diffusion * final_time);
+                if (mask(i, j, k) == 0) {
+                    return {Real(0), Real(0)};
+                }
+                return {volume * std::abs(array(i, j, k) - reference),
+                        volume * std::abs(reference)};
+            });
+        }
     }
+    auto const reductions = reduce_data.value(reduce_op);
+    Real absolute_error = amrex::get<0>(reductions);
+    Real exact_norm = amrex::get<1>(reductions);
+    ParallelDescriptor::ReduceRealSum(absolute_error);
+    ParallelDescriptor::ReduceRealSum(exact_norm);
     result.relative_l1_error = absolute_error / exact_norm;
+    Real const final_energy = composite_volume_sum(state, hierarchy, masks);
     result.relative_energy_drift =
         std::abs(final_energy - initial_energy) / initial_energy;
 
@@ -80,4 +132,3 @@ run_gaussian (bool use_amr)
 }
 
 } // namespace fld_test
-

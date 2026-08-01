@@ -1,20 +1,17 @@
 #ifndef FLD_TEST_COMMON_H_
 #define FLD_TEST_COMMON_H_
 
-#include "AMGGMRESSolver.H"
-#include "FLDLinearSystem.H"
-#include "FLDMesh.H"
+#include "DiffusionHierarchy.H"
+#include "FLDFieldOps.H"
 #include "FLDTest.H"
+#include "MLABecAMG.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_PlotFileUtil.H>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <functional>
-#include <numeric>
 #include <string>
 #include <utility>
 
@@ -25,15 +22,14 @@ namespace
 
 using namespace amrex;
 
-struct CloudMesh
+Real
+linear_tolerance ()
 {
-    Mesh mesh;
-    Vector<int> level_n;
-    Vector<std::pair<int, int>> level_y_bounds;
-};
+    return (sizeof(Real) == sizeof(float)) ? Real(5.e-5) : Real(2.e-10);
+}
 
 void
-record_setup (SolverSummary& summary, AMGGMRESSolver const& solver)
+record_setup (SolverSummary& summary, MLABecLapAMG const& solver)
 {
     auto const& diagnostics = solver.diagnostics();
     summary.setup_seconds += diagnostics.setup_seconds;
@@ -44,7 +40,7 @@ record_setup (SolverSummary& summary, AMGGMRESSolver const& solver)
 }
 
 void
-record_solve (SolverSummary& summary, LinearSolution const& solution)
+record_solve (SolverSummary& summary, SolveInfo const& solution)
 {
     ++summary.solves;
     summary.total_iterations += solution.iterations;
