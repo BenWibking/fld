@@ -258,6 +258,10 @@ run_mlabeclap_amg_checks ()
         make_strip_hierarchy({8, 32}, {{0, 8}, {12, 20}}, 8,
                              nonperiodic()),
         true);
+    check_constant_composite(
+        make_strip_hierarchy({12, 48}, {{0, 12}, {16, 32}}, 4,
+                             nonperiodic()),
+        true);
     amrex::Print() << "MLABecLapAMG operator, boundary, lifecycle, and "
                       "coarse/fine checks passed\n";
 }

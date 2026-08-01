@@ -305,11 +305,14 @@ struct MLABecLapAMG::Impl
         for (int level = 0; level + 1 < nlevels; ++level) {
             BoxArray refined_coarse = grids[level];
             refined_coarse.refine(ref_ratio[level]);
+            // A fine neighbor can lie just beyond the refined image of the
+            // current coarse grid when the coarse/fine interface coincides
+            // with a coarse grid boundary.
             fine_rows_on_coarse[level] = std::make_unique<LongFabArray>(
-                refined_coarse, dmap[level], 1, 0, host_info());
+                refined_coarse, dmap[level], 1, 1, host_info());
             fine_rows_on_coarse[level]->setVal(Long(-1));
             fine_rows_on_coarse[level]->ParallelCopy(
-                *row_ids[level + 1], 0, 0, 1, IntVect(0), IntVect(0),
+                *row_ids[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
                 geom[level + 1].periodicity());
             for (int direction = 0; direction < AMREX_SPACEDIM;
                  ++direction) {
