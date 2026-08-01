@@ -299,6 +299,101 @@ fill_robin_data (DiffusionHierarchy const& hierarchy,
     }
 }
 
+LevelData
+make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
+                           LevelData& energy, LevelData& extinction,
+                           LevelData& diffusion)
+{
+    static_assert(AMREX_SPACEDIM == 2);
+    Real constexpr beta = Real(0.5);
+    Real constexpr bottom_equilibrium = Real(0);
+    Real constexpr top_equilibrium = Real(4);
+
+    fill_level_ghosts(energy, hierarchy);
+    auto face_coefficients = make_face_data(hierarchy);
+    fill_face_coefficients(hierarchy, diffusion, &extinction,
+                           face_coefficients, true);
+    auto face_flux = make_face_data(hierarchy);
+    auto radiation_flux = make_cell_data(hierarchy, AMREX_SPACEDIM, 0);
+
+    for (int level = 0; level < static_cast<int>(energy.size()); ++level) {
+        Box const domain = hierarchy.geom[level].Domain();
+        auto const dlo = amrex::lbound(domain);
+        auto const dhi = amrex::ubound(domain);
+        auto const dx = hierarchy.geom[level].CellSizeArray();
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            MultiFab& flux = *face_flux[level][direction];
+            for (MFIter mfi(flux); mfi.isValid(); ++mfi) {
+                auto const e = energy[level]->const_array(mfi);
+                auto const d = diffusion[level]->const_array(mfi);
+                auto const b =
+                    face_coefficients[level][direction]->const_array(mfi);
+                auto const f = flux.array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    int il = i;
+                    int jl = j;
+                    int ir = i;
+                    int jr = j;
+                    if (direction == 0) {
+                        il = i - 1;
+                    } else {
+                        jl = j - 1;
+                    }
+                    bool const left_inside = il >= dlo.x && il <= dhi.x &&
+                                             jl >= dlo.y && jl <= dhi.y;
+                    bool const right_inside = ir >= dlo.x && ir <= dhi.x &&
+                                              jr >= dlo.y && jr <= dhi.y;
+                    if (left_inside && right_inside) {
+                        f(i, j, k) =
+                            -b(i, j, k) *
+                            (e(ir, jr, k) - e(il, jl, k)) / dx[direction];
+                        return;
+                    }
+
+                    // The x boundaries are homogeneous Neumann.  At a y
+                    // boundary, reconstruct the Robin flux used by the
+                    // linear system and orient it in the positive y direction.
+                    if (direction == 0) {
+                        f(i, j, k) = Real(0);
+                        return;
+                    }
+                    bool const lower_boundary = !left_inside;
+                    int const ic = lower_boundary ? ir : il;
+                    int const jc = lower_boundary ? jr : jl;
+                    Real const equilibrium = lower_boundary
+                                                 ? bottom_equilibrium
+                                                 : top_equilibrium;
+                    Real const orientation =
+                        lower_boundary ? Real(-1) : Real(1);
+                    Real const distance = Real(0.5) * dx[direction];
+                    f(i, j, k) =
+                        orientation * b(i, j, k) * beta *
+                        (e(ic, jc, k) - equilibrium) /
+                        (d(ic, jc, k) + beta * distance);
+                });
+            }
+        }
+
+        for (MFIter mfi(*radiation_flux[level]); mfi.isValid(); ++mfi) {
+            auto const fx = face_flux[level][0]->const_array(mfi);
+            auto const fy = face_flux[level][1]->const_array(mfi);
+            auto const f = radiation_flux[level]->array(mfi);
+            ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                f(i, j, k, 0) =
+                    Real(0.5) * (fx(i, j, k) + fx(i + 1, j, k));
+                f(i, j, k, 1) =
+                    Real(0.5) * (fy(i, j, k) + fy(i, j + 1, k));
+            });
+        }
+    }
+    average_down_hierarchy(radiation_flux, hierarchy);
+    return radiation_flux;
+}
+
 void
 write_cloud_plotfile (std::string const& name,
                       DiffusionHierarchy const& hierarchy, LevelData& state,
@@ -310,7 +405,9 @@ write_cloud_plotfile (std::string const& name,
     average_down_hierarchy(extinction, hierarchy);
     average_down_hierarchy(diffusion, hierarchy);
     average_down_hierarchy(cloud_fraction, hierarchy);
-    auto plot = make_cell_data(hierarchy, 5, 0);
+    auto radiation_flux = make_cloud_radiation_flux(
+        hierarchy, state, extinction, diffusion);
+    auto plot = make_cell_data(hierarchy, 5 + AMREX_SPACEDIM, 0);
     for (int level = 0; level < static_cast<int>(plot.size()); ++level) {
         MultiFab::Copy(*plot[level], *state[level], 0, 0, 1, 0);
         MultiFab::Copy(*plot[level], *extinction[level], 0, 1, 1, 0);
@@ -318,10 +415,13 @@ write_cloud_plotfile (std::string const& name,
         MultiFab::Copy(*plot[level], *cloud_fraction[level], 0, 4, 1, 0);
         MultiFab::Copy(*plot[level], *diffusion[level], 0, 3, 1, 0);
         MultiFab::Multiply(*plot[level], *extinction[level], 0, 3, 1, 0);
+        MultiFab::Copy(*plot[level], *radiation_flux[level], 0, 5,
+                       AMREX_SPACEDIM, 0);
     }
     Vector<std::string> const variables{
         "radiation_energy", "extinction", "diffusion_coefficient",
-        "flux_limiter", "cloud_volume_fraction"};
+        "flux_limiter", "cloud_volume_fraction", "radiation_flux_x",
+        "radiation_flux_y"};
     WriteMultiLevelPlotfile(
         name, static_cast<int>(plot.size()), get_level_const_ptrs(plot),
         variables, hierarchy.geom, Real(0), Vector<int>(plot.size(), 0),

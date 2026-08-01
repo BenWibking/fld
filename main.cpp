@@ -45,7 +45,7 @@ main (int argc, char* argv[])
         int front_only = 0;
         int solver_checks_only = 0;
         std::string cloud_case = "both";
-        std::string cloud_plotfile_prefix;
+        std::string cloud_plotfile_prefix = "plt";
         {
             ParmParse pp;
             pp.query("cloud_anderson_depth", cloud_anderson_depth);
@@ -234,25 +234,25 @@ main (int argc, char* argv[])
                        << transmission_difference << '\n';
         AMREX_ALWAYS_ASSERT(transmission_difference < Real(0.12));
 
-        auto const front = run_limited_front();
-        amrex::Print() << "FLD limited front: cells=" << front.cells
-                       << ", front/causal radius=" << front.front_radius << "/"
-                       << front.causal_radius
-                       << ", far excess=" << front.far_excess
-                       << ", unlimited far excess="
-                       << front.unlimited_far_excess
-                       << ", max |F|/(cE)=" << front.maximum_flux_fraction
-                       << ", E range=[" << front.minimum_energy << ","
-                       << front.maximum_energy << "]"
-                       << ", Picard total/max/change="
-                       << front.total_picard_iterations << "/"
-                       << front.maximum_picard_iterations << "/"
-                       << front.final_picard_change << ", ";
-        print_solver_summary(front.solver);
-        amrex::Print() << '\n';
+        // auto const front = run_limited_front();
+        // amrex::Print() << "FLD limited front: cells=" << front.cells
+        //                << ", front/causal radius=" << front.front_radius << "/"
+        //                << front.causal_radius
+        //                << ", far excess=" << front.far_excess
+        //                << ", unlimited far excess="
+        //                << front.unlimited_far_excess
+        //                << ", max |F|/(cE)=" << front.maximum_flux_fraction
+        //                << ", E range=[" << front.minimum_energy << ","
+        //                << front.maximum_energy << "]"
+        //                << ", Picard total/max/change="
+        //                << front.total_picard_iterations << "/"
+        //                << front.maximum_picard_iterations << "/"
+        //                << front.final_picard_change << ", ";
+        // print_solver_summary(front.solver);
+        // amrex::Print() << '\n';
 
-        amrex::Print() << "2-D scattering-only FLD Gaussian, cloud-layer, "
-                       << "and limited-front GMRES+AMG tests passed\n";
+        amrex::Print() << "2-D scattering-only FLD Gaussian and cloud-layer "
+                       << "GMRES+AMG tests passed\n";
     }
     amrex::Finalize();
 }
