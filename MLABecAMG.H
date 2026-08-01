@@ -91,6 +91,17 @@ class MLABecLapAMG
         amrex::Vector<amrex::MultiFab const*> const& rhs,
         amrex::Real relative_tolerance, amrex::Real absolute_tolerance);
 
+    /**
+     * Apply the currently assembled linear operator.
+     *
+     * The result is pointwise (the integrated matrix action is divided by
+     * cell volume) and uses the homogeneous part of physical boundary
+     * conditions.  Inhomogeneous boundary values remain part of the solve
+     * right-hand side and are intentionally not included here.
+     */
+    void apply (amrex::Vector<amrex::MultiFab*> const& output,
+                amrex::Vector<amrex::MultiFab const*> const& input) const;
+
     [[nodiscard]] amrex::AMG<amrex::Real>::Diagnostics const& diagnostics ()
         const noexcept;
 

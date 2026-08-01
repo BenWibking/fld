@@ -515,7 +515,7 @@ run_cloud (bool use_amr, int fine_n, int anderson_depth, Real anderson_beta,
                          Real(4));
     Real const nonlinear_tolerance =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-6);
-    int constexpr maximum_nonlinear_iterations = 125;
+    int constexpr maximum_nonlinear_iterations = 250;
     Real constexpr incident_marshak_flux = Real(1);
 
     for (int iteration = 0; iteration < maximum_nonlinear_iterations;
