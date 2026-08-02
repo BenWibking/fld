@@ -241,9 +241,18 @@ class BoomerAMGPreconditioner
         HYPRE_BoomerAMGSetAggNumLevels(solver, 0);
         HYPRE_BoomerAMGSetCycleType(solver, 1);
         HYPRE_BoomerAMGSetRelaxOrder(solver, 0);
-        HYPRE_BoomerAMGSetCycleRelaxType(solver, 18, 1);
-        HYPRE_BoomerAMGSetCycleRelaxType(solver, 18, 2);
+        HYPRE_BoomerAMGSetCycleRelaxType(solver, 16, 1);
+        HYPRE_BoomerAMGSetCycleRelaxType(solver, 16, 2);
         HYPRE_BoomerAMGSetCycleRelaxType(solver, 9, 3);
+        HYPRE_BoomerAMGSetChebyOrder(solver, options.chebyshev_order);
+        HYPRE_BoomerAMGSetChebyFraction(
+            solver, options.chebyshev_fraction);
+        HYPRE_BoomerAMGSetChebyScale(
+            solver, options.chebyshev_scale ? 1 : 0);
+        HYPRE_BoomerAMGSetChebyVariant(
+            solver, options.chebyshev_variant);
+        HYPRE_BoomerAMGSetChebyEigEst(
+            solver, options.chebyshev_eigenvalue_iterations);
         HYPRE_BoomerAMGSetCycleNumSweeps(solver, options.pre_sweeps, 1);
         HYPRE_BoomerAMGSetCycleNumSweeps(solver, options.post_sweeps, 2);
         HYPRE_BoomerAMGSetCycleNumSweeps(solver, 1, 3);
