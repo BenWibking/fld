@@ -64,6 +64,8 @@ class CompositeGridTopology
     [[nodiscard]] amrex::Vector<amrex::Geometry> const& geometry () const
         noexcept;
     [[nodiscard]] amrex::Vector<amrex::BoxArray> const& grids () const noexcept;
+    [[nodiscard]] amrex::Vector<amrex::DistributionMapping> const& dmap () const
+        noexcept;
     [[nodiscard]] amrex::Vector<amrex::IntVect> const& refRatio () const
         noexcept;
     [[nodiscard]] amrex::AlgPartition const& partition () const noexcept;

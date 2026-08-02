@@ -25,8 +25,23 @@ struct RobinBCData
 struct SolveInfo
 {
     int iterations = 0;
+    int preconditioner_applications = 0;
     amrex::Real relative_residual = amrex::Real(0);
     amrex::Real absolute_residual = amrex::Real(0);
+    double solve_seconds = 0.0;
+    double preconditioner_seconds = 0.0;
+};
+
+enum class MLABecPreconditioner
+{
+    AMG,
+    MLMG
+};
+
+enum class MLABecAMGBackend
+{
+    Native,
+    BoomerAMG
 };
 
 struct MLABecAssemblyDiagnostics
@@ -41,7 +56,11 @@ struct MLABecAssemblyDiagnostics
 
 /**
  * Cell-centered, single-component, multilevel ABec solver using AMReX's
- * native `SpMatrix`, `GMRES_MV`, and `AMG` algebra.
+ * native `SpMatrix` and `GMRES_MV` algebra.  GMRES is always the outer
+ * solver.  Its right preconditioner is selectable between algebraic AMG and
+ * one fixed MLMG cycle; the AMG implementation is independently selectable
+ * between AMReX's native AMG and HYPRE's BoomerAMG.  Consequently,
+ * `SolveInfo::iterations` always reports outer GMRES iterations.
  *
  * The operator is
  * `ascalar * acoef * phi - bscalar * div(bcoef * grad(phi))`.
@@ -49,7 +68,10 @@ struct MLABecAssemblyDiagnostics
  * have ghosts; right-hand sides must have none.  `setup` copies all data it
  * needs, so coefficient and boundary fields need only remain valid for that
  * call.  A later `setup` replaces the matrix and preconditioner, while any
- * number of `solve` calls reuse the current setup.
+ * number of `solve` calls reuse the current setup.  Runtime selection uses
+ * `<parmparse_prefix>.preconditioner = amg|mlmg` and
+ * `<parmparse_prefix>.amg_backend = native|boomeramg`.  Each preconditioner
+ * application performs one multigrid cycle.
  *
  * Dirichlet values are read from the exterior ghost cells of
  * `level_bc_data`.  Homogeneous Neumann needs no data.  Robin and Marshak
@@ -64,6 +86,15 @@ class MLABecLapAMG
         amrex::Vector<amrex::BoxArray> grids,
         amrex::Vector<amrex::DistributionMapping> dmap,
         amrex::AMG<amrex::Real>::Options options = {},
+        std::string parmparse_prefix = "mlabeclap_amg");
+
+    MLABecLapAMG (
+        amrex::Vector<amrex::Geometry> geom,
+        amrex::Vector<amrex::BoxArray> grids,
+        amrex::Vector<amrex::DistributionMapping> dmap,
+        amrex::AMG<amrex::Real>::Options options,
+        MLABecPreconditioner preconditioner,
+        MLABecAMGBackend amg_backend = MLABecAMGBackend::Native,
         std::string parmparse_prefix = "mlabeclap_amg");
 
     ~MLABecLapAMG ();
@@ -107,6 +138,12 @@ class MLABecLapAMG
 
     [[nodiscard]] MLABecAssemblyDiagnostics const& assembly_diagnostics ()
         const noexcept;
+
+    [[nodiscard]] MLABecPreconditioner preconditioner () const noexcept;
+    [[nodiscard]] char const* preconditioner_name () const noexcept;
+    [[nodiscard]] MLABecAMGBackend amg_backend () const noexcept;
+    [[nodiscard]] char const* amg_backend_name () const noexcept;
+    [[nodiscard]] double setup_seconds () const noexcept;
 
   private:
     struct Impl;

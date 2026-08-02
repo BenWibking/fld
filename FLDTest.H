@@ -1,6 +1,8 @@
 #ifndef FLD_TEST_H_
 #define FLD_TEST_H_
 
+#include "MLABecAMG.H"
+
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>
 
@@ -11,12 +13,18 @@ namespace fld_test
 
 struct SolverSummary
 {
+    std::string outer_solver;
+    std::string preconditioner;
+    std::string amg_backend;
     int solves = 0;
     int total_iterations = 0;
     int maximum_iterations = 0;
+    int total_preconditioner_applications = 0;
     int maximum_levels = 0;
     amrex::Real maximum_relative_residual = amrex::Real(0);
     double setup_seconds = 0.0;
+    double solve_seconds = 0.0;
+    double preconditioner_seconds = 0.0;
     double maximum_operator_complexity = 0.0;
 
     [[nodiscard]] amrex::Real
@@ -75,7 +83,9 @@ CloudResult run_cloud (bool use_amr, int fine_n, int anderson_depth,
                        bool iteration_output,
                        std::string const& plotfile_name);
 
-FrontResult run_limited_front ();
+FrontResult run_limited_front (
+    MLABecPreconditioner preconditioner,
+    MLABecAMGBackend amg_backend = MLABecAMGBackend::Native);
 
 void run_mlabeclap_amg_checks ();
 

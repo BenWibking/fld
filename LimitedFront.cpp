@@ -81,7 +81,8 @@ far_excess (DiffusionHierarchy const& hierarchy, LevelData const& state,
 } // namespace
 
 FrontResult
-run_limited_front ()
+run_limited_front (MLABecPreconditioner preconditioner,
+                   MLABecAMGBackend amg_backend)
 {
     Array<int, AMREX_SPACEDIM> const nonperiodic{
         AMREX_D_DECL(0, 0, 0)};
@@ -137,7 +138,8 @@ run_limited_front ()
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-5);
     int constexpr maximum_picard_iterations = 75;
 
-    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
+    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap, {},
+                        preconditioner, amg_backend);
     FrontResult result;
     result.cells = composite_cell_count(masks);
     for (int step = 0; step < steps; ++step) {
@@ -219,7 +221,8 @@ run_limited_front ()
     fill_face_coefficients(hierarchy, unlimited_diffusion, nullptr,
                            unlimited_bcoef, false);
     MLABecLapAMG unlimited_solver(hierarchy.geom, hierarchy.grids,
-                                  hierarchy.dmap);
+                                  hierarchy.dmap, {}, preconditioner,
+                                  amg_backend);
     unlimited_solver.setup(Real(1), dt, get_level_const_ptrs(acoef),
                            get_face_const_ptrs(unlimited_bcoef), neumann,
                            neumann, {});

@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <string>
+#include <utility>
 
 using namespace amrex;
 using namespace fld_test;
@@ -15,15 +16,25 @@ namespace
 void
 print_solver_summary (SolverSummary const& solver)
 {
-    amrex::Print() << "solves=" << solver.solves
-                   << ", GMRES avg/max=" << solver.average_iterations() << "/"
+    amrex::Print() << "outer solver=" << solver.outer_solver
+                   << ", preconditioner=" << solver.preconditioner
+                   << ", AMG backend=" << solver.amg_backend
+                   << ", solves=" << solver.solves
+                   << ", linear iterations total/avg/max="
+                   << solver.total_iterations << "/"
+                   << solver.average_iterations() << "/"
                    << solver.maximum_iterations
+                   << ", preconditioner applications="
+                   << solver.total_preconditioner_applications
                    << ", max true relative residual="
                    << solver.maximum_relative_residual
-                   << ", max AMG levels=" << solver.maximum_levels
+                   << ", max native AMG levels=" << solver.maximum_levels
                    << ", max operator complexity="
                    << solver.maximum_operator_complexity
-                   << ", aggregate setup=" << solver.setup_seconds << " s";
+                   << ", aggregate setup=" << solver.setup_seconds << " s"
+                   << ", aggregate solve=" << solver.solve_seconds << " s"
+                   << " (preconditioner=" << solver.preconditioner_seconds
+                   << " s)";
 }
 } // namespace
 
@@ -66,23 +77,43 @@ main (int argc, char* argv[])
         }
 
         if (front_only != 0) {
-            auto const front = run_limited_front();
-            amrex::Print() << "FLD limited front: cells=" << front.cells
-                           << ", front/causal radius=" << front.front_radius
-                           << "/" << front.causal_radius
-                           << ", far excess=" << front.far_excess
-                           << ", unlimited far excess="
-                           << front.unlimited_far_excess
-                           << ", max |F|/(cE)="
-                           << front.maximum_flux_fraction << ", E range=["
-                           << front.minimum_energy << ","
-                           << front.maximum_energy << "]"
-                           << ", Picard total/max/change="
-                           << front.total_picard_iterations << "/"
-                           << front.maximum_picard_iterations << "/"
-                           << front.final_picard_change << ", ";
-            print_solver_summary(front.solver);
-            amrex::Print() << '\n';
+            using Configuration =
+                std::pair<MLABecPreconditioner, MLABecAMGBackend>;
+            Vector<Configuration> configurations{
+                {MLABecPreconditioner::AMG, MLABecAMGBackend::Native},
+                {MLABecPreconditioner::MLMG, MLABecAMGBackend::Native}};
+#ifdef AMREX_USE_HYPRE
+            configurations.emplace_back(MLABecPreconditioner::AMG,
+                                        MLABecAMGBackend::BoomerAMG);
+#endif
+            for (auto const& [preconditioner, amg_backend] : configurations) {
+                auto const front =
+                    run_limited_front(preconditioner, amg_backend);
+                amrex::Print()
+                    << "FLD limited-front preconditioner comparison: cells="
+                    << front.cells << ", front/causal radius="
+                    << front.front_radius << "/" << front.causal_radius
+                    << ", far excess=" << front.far_excess
+                    << ", unlimited far excess="
+                    << front.unlimited_far_excess
+                    << ", max |F|/(cE)=" << front.maximum_flux_fraction
+                    << ", E range=[" << front.minimum_energy << ","
+                    << front.maximum_energy << "]"
+                    << ", nonlinear iterations total/max="
+                    << front.total_picard_iterations << "/"
+                    << front.maximum_picard_iterations
+                    << ", final nonlinear fixed-point residual="
+                    << front.final_picard_change << ", ";
+                print_solver_summary(front.solver);
+                amrex::Print() << '\n';
+            }
+#ifndef AMREX_USE_HYPRE
+            amrex::Print()
+                << "FLD limited-front preconditioner comparison: "
+                << "outer solver=gmres, preconditioner=amg, "
+                << "AMG backend=boomeramg, unavailable "
+                << "(rebuild with USE_HYPRE=TRUE)\n";
+#endif
             amrex::Finalize();
             return 0;
         }
@@ -197,7 +228,7 @@ main (int argc, char* argv[])
                        << cloud_uniform.cloudy_area_relative_error
                        << ", E range=[" << cloud_uniform.minimum_energy << ","
                        << cloud_uniform.maximum_energy << "]"
-                       << ", nonlinear iterations/change="
+                       << ", nonlinear iterations/final fixed-point residual="
                        << cloud_uniform.nonlinear_iterations << "/"
                        << cloud_uniform.final_nonlinear_change
                        << ", Anderson steps/restarts="
@@ -218,7 +249,7 @@ main (int argc, char* argv[])
                        << cloud_amr.cloudy_area_relative_error
                        << ", E range=[" << cloud_amr.minimum_energy << ","
                        << cloud_amr.maximum_energy << "]"
-                       << ", nonlinear iterations/change="
+                       << ", nonlinear iterations/final fixed-point residual="
                        << cloud_amr.nonlinear_iterations << "/"
                        << cloud_amr.final_nonlinear_change
                        << ", Anderson steps/restarts="
@@ -252,7 +283,7 @@ main (int argc, char* argv[])
         // amrex::Print() << '\n';
 
         amrex::Print() << "2-D scattering-only FLD Gaussian and cloud-layer "
-                       << "GMRES+AMG tests passed\n";
+                       << "GMRES+multigrid tests passed\n";
     }
     amrex::Finalize();
 }

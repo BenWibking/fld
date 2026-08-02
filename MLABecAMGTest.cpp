@@ -483,21 +483,28 @@ check_robin_constant ()
     RobinBCData data{get_level_const_ptrs(robin_a),
                      get_level_const_ptrs(robin_b),
                      get_level_const_ptrs(robin_f)};
-    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
-    solver.setup(Real(0), Real(1), get_level_const_ptrs(acoef),
-                 get_face_const_ptrs(bcoef), robin, robin, {}, data);
-    auto const info = solver.solve(get_level_ptrs(solution),
-                                   get_level_const_ptrs(rhs),
-                                   linear_tolerance(), Real(0));
-    amrex::ignore_unused(info);
-    auto error = clone_level_data(solution);
-    lincomb_level_data(error, Real(1), solution, Real(-1), exact);
     auto masks = make_composite_masks(hierarchy);
-    auto const [minimum, maximum] = composite_minimum_maximum(error, masks);
-    Real const error_norm = amrex::max(std::abs(minimum), std::abs(maximum));
     Real const limit =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-3) : Real(2.e-8);
-    AMREX_ALWAYS_ASSERT(error_norm < limit);
+    for (auto preconditioner :
+         {MLABecPreconditioner::AMG, MLABecPreconditioner::MLMG}) {
+        set_level_data(solution, Real(0));
+        MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap,
+                            {}, preconditioner);
+        solver.setup(Real(0), Real(1), get_level_const_ptrs(acoef),
+                     get_face_const_ptrs(bcoef), robin, robin, {}, data);
+        auto const info = solver.solve(get_level_ptrs(solution),
+                                       get_level_const_ptrs(rhs),
+                                       linear_tolerance(), Real(0));
+        amrex::ignore_unused(info);
+        auto error = clone_level_data(solution);
+        lincomb_level_data(error, Real(1), solution, Real(-1), exact);
+        auto const [minimum, maximum] =
+            composite_minimum_maximum(error, masks);
+        Real const error_norm =
+            amrex::max(std::abs(minimum), std::abs(maximum));
+        AMREX_ALWAYS_ASSERT(error_norm < limit);
+    }
 }
 
 } // namespace

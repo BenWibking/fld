@@ -505,6 +505,12 @@ CompositeGridTopology::grids () const noexcept
     return m_grids;
 }
 
+Vector<DistributionMapping> const&
+CompositeGridTopology::dmap () const noexcept
+{
+    return m_dmap;
+}
+
 Vector<IntVect> const&
 CompositeGridTopology::refRatio () const noexcept
 {
