@@ -888,6 +888,69 @@ struct MLABecLapAMG::Impl
         return info;
     }
 
+    void precondition (Vector<MultiFab*> const& output,
+                       Vector<MultiFab const*> const& rhs)
+    {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            matrix != nullptr && gmres != nullptr,
+            "MLABecLapAMG::setup must be called before precondition");
+        validate_field_vectors(output, rhs);
+
+        int const nlevels = topology.numLevels();
+        auto const& geom = topology.geometry();
+        auto const& cells = topology.cells();
+        auto const& partition = topology.partition();
+        Long const nlocal = topology.localRows();
+        Vector<std::unique_ptr<MultiFab>> host_rhs(nlevels);
+        Vector<std::unique_ptr<MultiFab>> host_output(nlevels);
+        for (int level = 0; level < nlevels; ++level) {
+            AMREX_ALWAYS_ASSERT(rhs[level]->nGrow() == 0);
+            host_rhs[level] =
+                stage_multifab(*rhs[level], 0, geom[level].periodicity());
+            host_output[level] =
+                stage_multifab(*output[level], 0, geom[level].periodicity());
+        }
+
+        Gpu::PinnedVector<Real> local_rhs(nlocal, Real(0));
+        Gpu::PinnedVector<Real> local_output(nlocal, Real(0));
+        for (Long row = 0; row < nlocal; ++row) {
+            auto const& cell = cells[row];
+            local_rhs[row] =
+                cell.volume * host_rhs[cell.level]
+                                  ->atLocalIdx(cell.local_grid)(cell.index);
+        }
+        AlgVector<Real> algebra_rhs(partition);
+        AlgVector<Real> algebra_output(partition);
+        if (nlocal > 0) {
+            Gpu::copyAsync(Gpu::hostToDevice, local_rhs.begin(),
+                           local_rhs.end(), algebra_rhs.data());
+            Gpu::streamSynchronize();
+        }
+        apply_preconditioner(algebra_output, algebra_rhs);
+        if (nlocal > 0) {
+            Gpu::copyAsync(Gpu::deviceToHost, algebra_output.data(),
+                           algebra_output.data() + nlocal,
+                           local_output.begin());
+            Gpu::streamSynchronize();
+        }
+        for (Long row = 0; row < nlocal; ++row) {
+            auto const& cell = cells[row];
+            host_output[cell.level]->atLocalIdx(cell.local_grid)(cell.index) =
+                local_output[row];
+        }
+        for (int level = 0; level < nlevels; ++level) {
+            MultiFab::Copy(*output[level], *host_output[level], 0, 0, 1, 0);
+        }
+        for (int level = nlevels - 2; level >= 0; --level) {
+            amrex::average_down(*output[level + 1], *output[level],
+                                geom[level + 1], geom[level], 0, 1,
+                                topology.refRatio()[level]);
+        }
+        for (int level = 0; level < nlevels; ++level) {
+            output[level]->FillBoundary(geom[level].periodicity());
+        }
+    }
+
     void apply (Vector<MultiFab*> const& output,
                 Vector<MultiFab const*> const& input) const
     {
@@ -1052,6 +1115,13 @@ MLABecLapAMG::solve (Vector<MultiFab*> const& solution,
 {
     return m_impl->solve(solution, rhs, relative_tolerance,
                          absolute_tolerance);
+}
+
+void
+MLABecLapAMG::precondition (Vector<MultiFab*> const& output,
+                            Vector<MultiFab const*> const& rhs)
+{
+    m_impl->precondition(output, rhs);
 }
 
 void

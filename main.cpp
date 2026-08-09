@@ -54,6 +54,13 @@ main (int argc, char* argv[])
         int cloud_flux_limiter = 1;
         int cloud_only = 0;
         int front_only = 0;
+        int icase_only = 0;
+        int icase_n_cell = 87;
+        int icase_steps = 1000;
+        int icase_iteration_output = 1;
+        int icase_write_plotfile = 1;
+        Real icase_dt = Real(0.01);
+        std::string icase_plotfile = "plt_icase_2001";
         int solver_checks_only = 0;
         std::string cloud_case = "both";
         std::string cloud_plotfile_prefix = "plt";
@@ -66,12 +73,53 @@ main (int argc, char* argv[])
             pp.query("cloud_flux_limiter", cloud_flux_limiter);
             pp.query("cloud_only", cloud_only);
             pp.query("front_only", front_only);
+            pp.query("icase_only", icase_only);
+            pp.query("icase_n_cell", icase_n_cell);
+            pp.query("icase_steps", icase_steps);
+            pp.query("icase_dt", icase_dt);
+            pp.query("icase_iteration_output", icase_iteration_output);
+            pp.query("icase_write_plotfile", icase_write_plotfile);
+            pp.query("icase_plotfile", icase_plotfile);
             pp.query("solver_checks_only", solver_checks_only);
             pp.query("cloud_case", cloud_case);
             pp.query("cloud_plotfile_prefix", cloud_plotfile_prefix);
         }
 
         if (solver_checks_only != 0) {
+            amrex::Finalize();
+            return 0;
+        }
+
+        if (icase_only != 0) {
+            auto const icase = run_icase_2001(
+                icase_n_cell, icase_steps, icase_dt,
+                icase_iteration_output != 0,
+                icase_write_plotfile != 0 ? icase_plotfile : std::string());
+            amrex::Print()
+                << "ICASE 2001-12 nonequilibrium radiation diffusion: "
+                << "cells/high-z cells=" << icase.cells << "/"
+                << icase.high_z_cells << ", steps/final time="
+                << icase.time_steps << "/" << icase.final_time
+                << ", total energy initial/final="
+                << icase.initial_total_energy << "/"
+                << icase.final_total_energy << ", E range=["
+                << icase.minimum_radiation_energy << ","
+                << icase.maximum_radiation_energy << "]"
+                << ", T range=[" << icase.minimum_material_temperature
+                << "," << icase.maximum_material_temperature << "]"
+                << ", nonlinear iterations total/max/change="
+                << icase.total_nonlinear_iterations << "/"
+                << icase.maximum_nonlinear_iterations << "/"
+                << icase.final_nonlinear_change
+                << ", max coupled residual="
+                << icase.maximum_coupled_residual
+                << ", max step energy-balance error="
+                << icase.maximum_energy_balance_error
+                << ", Newton-Krylov iterations total/max="
+                << icase.total_newton_krylov_iterations << "/"
+                << icase.maximum_newton_krylov_iterations << ", ";
+            print_solver_summary(icase.solver);
+            amrex::Print() << '\n';
             amrex::Finalize();
             return 0;
         }

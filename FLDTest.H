@@ -76,6 +76,28 @@ struct FrontResult
     SolverSummary solver;
 };
 
+struct ICASE2001Result
+{
+    amrex::Real final_time = amrex::Real(0);
+    amrex::Real initial_total_energy = amrex::Real(0);
+    amrex::Real final_total_energy = amrex::Real(0);
+    amrex::Real minimum_radiation_energy = amrex::Real(0);
+    amrex::Real maximum_radiation_energy = amrex::Real(0);
+    amrex::Real minimum_material_temperature = amrex::Real(0);
+    amrex::Real maximum_material_temperature = amrex::Real(0);
+    amrex::Real final_nonlinear_change = amrex::Real(0);
+    amrex::Real maximum_coupled_residual = amrex::Real(0);
+    amrex::Real maximum_energy_balance_error = amrex::Real(0);
+    int time_steps = 0;
+    int total_nonlinear_iterations = 0;
+    int maximum_nonlinear_iterations = 0;
+    int total_newton_krylov_iterations = 0;
+    int maximum_newton_krylov_iterations = 0;
+    amrex::Long cells = 0;
+    amrex::Long high_z_cells = 0;
+    SolverSummary solver;
+};
+
 GaussianResult run_gaussian (bool use_amr);
 
 CloudResult run_cloud (bool use_amr, int fine_n, int anderson_depth,
@@ -86,6 +108,10 @@ CloudResult run_cloud (bool use_amr, int fine_n, int anderson_depth,
 FrontResult run_limited_front (
     MLABecPreconditioner preconditioner,
     MLABecAMGBackend amg_backend = MLABecAMGBackend::Native);
+
+ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
+                                amrex::Real dt, bool iteration_output,
+                                std::string const& plotfile_name);
 
 void run_mlabeclap_amg_checks ();
 

@@ -369,6 +369,42 @@ check_constant_composite (DiffusionHierarchy const& hierarchy,
     auto const neumann = all_bc(LinOpBCType::Neumann);
     solver.setup(Real(1), Real(0.01), get_level_const_ptrs(acoef),
                  get_face_const_ptrs(bcoef), neumann, neumann, {});
+    auto preconditioned = make_cell_data(hierarchy, 1, 1);
+    auto repeated = make_cell_data(hierarchy, 1, 1);
+    auto scaled_rhs = clone_level_data(rhs);
+    auto scaled_preconditioned = make_cell_data(hierarchy, 1, 1);
+    set_level_data(preconditioned, Real(0));
+    set_level_data(repeated, Real(0));
+    set_level_data(scaled_preconditioned, Real(0));
+    solver.precondition(get_level_ptrs(preconditioned),
+                        get_level_const_ptrs(rhs));
+    solver.precondition(get_level_ptrs(repeated),
+                        get_level_const_ptrs(rhs));
+    for (auto& field : scaled_rhs) {
+        field->mult(Real(2), 0, 1, 0);
+    }
+    solver.precondition(get_level_ptrs(scaled_preconditioned),
+                        get_level_const_ptrs(scaled_rhs));
+    auto repeat_error = clone_level_data(repeated);
+    lincomb_level_data(repeat_error, Real(1), repeated, Real(-1),
+                       preconditioned);
+    auto linearity_error = clone_level_data(scaled_preconditioned);
+    lincomb_level_data(linearity_error, Real(1), scaled_preconditioned,
+                       Real(-2), preconditioned);
+    auto preconditioner_masks = make_composite_masks(hierarchy);
+    auto const [repeat_minimum, repeat_maximum] =
+        composite_minimum_maximum(repeat_error, preconditioner_masks);
+    auto const [linearity_minimum, linearity_maximum] =
+        composite_minimum_maximum(linearity_error, preconditioner_masks);
+    Real const preconditioner_tolerance =
+        (sizeof(Real) == sizeof(float)) ? Real(2.e-5) : Real(2.e-12);
+    AMREX_ALWAYS_ASSERT(
+        amrex::max(std::abs(repeat_minimum), std::abs(repeat_maximum)) <
+        preconditioner_tolerance);
+    AMREX_ALWAYS_ASSERT(
+        amrex::max(std::abs(linearity_minimum),
+                   std::abs(linearity_maximum)) <
+        preconditioner_tolerance);
     auto const info = solver.solve(get_level_ptrs(solution),
                                    get_level_const_ptrs(rhs),
                                    linear_tolerance(), Real(0));

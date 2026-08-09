@@ -123,6 +123,17 @@ class MLABecLapAMG
         amrex::Real relative_tolerance, amrex::Real absolute_tolerance);
 
     /**
+     * Apply exactly one cycle of the configured multigrid preconditioner.
+     *
+     * Unlike `solve`, this is a fixed linear map suitable for use inside an
+     * enclosing Krylov method.  Both fields are pointwise; the implementation
+     * handles the volume weighting used by the assembled algebraic matrix.
+     */
+    void precondition (
+        amrex::Vector<amrex::MultiFab*> const& output,
+        amrex::Vector<amrex::MultiFab const*> const& rhs);
+
+    /**
      * Apply the currently assembled linear operator.
      *
      * The result is pointwise (the integrated matrix action is divided by
