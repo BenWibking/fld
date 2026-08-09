@@ -1,5 +1,5 @@
-#include "AndersonMixer.H"
 #include "FLDTestCommon.H"
+#include "NewtonKrylovSolver.H"
 
 #include <AMReX_AsyncOut.H>
 #include <AMReX_MFIter.H>
@@ -299,6 +299,191 @@ fill_robin_data (DiffusionHierarchy const& hierarchy,
     }
 }
 
+class CloudNewtonProblem
+{
+  public:
+    using State = LevelData;
+    using RT = Real;
+
+    CloudNewtonProblem (
+        DiffusionHierarchy const& hierarchy, Vector<iMultiFab> const& masks,
+        LevelData& extinction, LevelData const& rhs, LevelData const& acoef,
+        PhysicalBoundaryData const& boundary, bool limited,
+        MLABecLapAMG& base_solver, SolverSummary& summary)
+        : m_hierarchy(hierarchy), m_masks(masks), m_extinction(extinction),
+          m_rhs(rhs), m_acoef(acoef), m_boundary(boundary),
+          m_limited(limited), m_base_solver(base_solver), m_summary(summary),
+          m_trial_solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap),
+          m_base_diffusion(make_cell_data(hierarchy, 1, 1)),
+          m_trial_diffusion(make_cell_data(hierarchy, 1, 1)),
+          m_base_bcoef(make_face_data(hierarchy)),
+          m_trial_bcoef(make_face_data(hierarchy)),
+          m_base_robin_a(make_cell_data(hierarchy, 1, 0)),
+          m_base_robin_b(make_cell_data(hierarchy, 1, 0)),
+          m_base_robin_f(make_cell_data(hierarchy, 1, 0)),
+          m_trial_robin_a(make_cell_data(hierarchy, 1, 0)),
+          m_trial_robin_b(make_cell_data(hierarchy, 1, 0)),
+          m_trial_robin_f(make_cell_data(hierarchy, 1, 0))
+    {}
+
+    void prepare (State const& state)
+    {
+        auto const [minimum, maximum] =
+            composite_minimum_maximum(state, m_masks);
+        amrex::ignore_unused(minimum);
+        m_state_scale = amrex::max(maximum, Real(1));
+        setup(m_base_solver, state, m_base_diffusion, m_base_bcoef,
+              m_base_robin_a, m_base_robin_b, m_base_robin_f);
+        record_setup(m_summary, m_base_solver);
+    }
+
+    Real predict (State& state, Real damping)
+    {
+        AMREX_ALWAYS_ASSERT(damping > Real(0) && damping <= Real(1));
+        setup(m_base_solver, state, m_base_diffusion, m_base_bcoef,
+              m_base_robin_a, m_base_robin_b, m_base_robin_f);
+        record_setup(m_summary, m_base_solver);
+        State prediction = clone_level_data(state);
+        auto const info = m_base_solver.solve(
+            get_level_ptrs(prediction), get_level_const_ptrs(m_rhs),
+            linear_tolerance(), Real(0));
+        record_solve(m_summary, info);
+        Real const change =
+            composite_maximum_relative_change(prediction, state, m_masks);
+        lincomb_level_data(state, Real(1) - damping, state, damping,
+                           prediction);
+        average_down_hierarchy(state, m_hierarchy);
+        return change;
+    }
+
+    void residual (State const& state, State& output)
+    {
+        setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
+              m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
+        m_trial_solver.residual(get_level_ptrs(output),
+                                get_level_const_ptrs(state),
+                                get_level_const_ptrs(m_rhs));
+    }
+
+    void linearized_residual (State const& state, State& output)
+    {
+        setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
+              m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
+        m_trial_solver.residual(get_level_ptrs(output),
+                                get_level_const_ptrs(state),
+                                get_level_const_ptrs(m_rhs));
+    }
+
+    State makeVecRHS () const { return make_cell_data(m_hierarchy, 1, 0); }
+    State makeVecLHS () const { return make_cell_data(m_hierarchy, 1, 1); }
+
+    void precondition (State& output, State const& rhs)
+    {
+        set_level_data(output, Real(0));
+        m_base_solver.precondition(get_level_ptrs(output),
+                                   get_level_const_ptrs(rhs));
+    }
+
+    void assign (State& lhs, State const& rhs) const
+    {
+        copy_level_data(lhs, rhs);
+    }
+
+    Real dotProduct (State const& lhs, State const& rhs) const
+    {
+        return composite_weighted_dot(lhs, rhs, m_hierarchy, m_masks) /
+               (m_state_scale * m_state_scale);
+    }
+
+    void increment (State& lhs, State const& rhs, Real scale) const
+    {
+        saxpy_level_data(lhs, scale, rhs);
+    }
+
+    void linComb (State& lhs, Real a, State const& rhs_a, Real b,
+                  State const& rhs_b) const
+    {
+        lincomb_level_data(lhs, a, rhs_a, b, rhs_b);
+    }
+
+    Real norm2 (State const& state) const
+    {
+        return std::sqrt(amrex::max(dotProduct(state, state), Real(0)));
+    }
+
+    void scale (State& state, Real factor) const
+    {
+        for (auto& level : state) {
+            level->mult(factor, 0, 1, 0);
+        }
+    }
+
+    void setToZero (State& state) const { set_level_data(state, Real(0)); }
+    State clone (State const& state) const { return clone_level_data(state); }
+
+    void fill_candidate (State& candidate, State const& state,
+                         State const& correction, Real step_length) const
+    {
+        lincomb_level_data(candidate, Real(1), state, step_length,
+                           correction);
+        average_down_hierarchy(candidate, m_hierarchy);
+    }
+
+    bool admissible (State const& state) const
+    {
+        auto const [minimum, maximum] =
+            composite_minimum_maximum(state, m_masks);
+        return composite_all_finite(state, m_masks) && minimum >= Real(0) &&
+               maximum <= Real(4.01);
+    }
+
+    Real relative_change (State const& lhs, State const& rhs) const
+    {
+        return composite_maximum_relative_change(lhs, rhs, m_masks);
+    }
+
+  private:
+    void setup (MLABecLapAMG& solver, State const& state,
+                LevelData& diffusion, FaceData& bcoef, LevelData& robin_a,
+                LevelData& robin_b, LevelData& robin_f)
+    {
+        State work = clone_level_data(state);
+        compute_diffusion(m_hierarchy, work, m_extinction, diffusion,
+                          m_boundary, m_limited);
+        fill_face_coefficients(m_hierarchy, diffusion, &m_extinction, bcoef,
+                               true);
+        fill_robin_data(m_hierarchy, diffusion, robin_a, robin_b, robin_f);
+        RobinBCData robin{get_level_const_ptrs(robin_a),
+                          get_level_const_ptrs(robin_b),
+                          get_level_const_ptrs(robin_f)};
+        solver.setup(Real(0), Real(1), get_level_const_ptrs(m_acoef),
+                     get_face_const_ptrs(bcoef), m_boundary.lo,
+                     m_boundary.hi, {}, robin);
+    }
+
+    DiffusionHierarchy const& m_hierarchy;
+    Vector<iMultiFab> const& m_masks;
+    LevelData& m_extinction;
+    LevelData const& m_rhs;
+    LevelData const& m_acoef;
+    PhysicalBoundaryData const& m_boundary;
+    bool m_limited;
+    MLABecLapAMG& m_base_solver;
+    SolverSummary& m_summary;
+    MLABecLapAMG m_trial_solver;
+    LevelData m_base_diffusion;
+    LevelData m_trial_diffusion;
+    FaceData m_base_bcoef;
+    FaceData m_trial_bcoef;
+    LevelData m_base_robin_a;
+    LevelData m_base_robin_b;
+    LevelData m_base_robin_f;
+    LevelData m_trial_robin_a;
+    LevelData m_trial_robin_b;
+    LevelData m_trial_robin_f;
+    Real m_state_scale = Real(1);
+};
+
 LevelData
 make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
                            LevelData& energy, LevelData& extinction,
@@ -458,26 +643,19 @@ write_cloud_plotfile (std::string const& name,
 } // namespace
 
 CloudResult
-run_cloud (bool use_amr, int fine_n, int anderson_depth, Real anderson_beta,
-           bool limited, bool iteration_output,
+run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
            std::string const& plotfile_name)
 {
     AMREX_ALWAYS_ASSERT(fine_n > 0 && fine_n % 4 == 0);
     DiffusionHierarchy hierarchy = make_cloud_hierarchy(use_amr, fine_n);
     auto masks = make_composite_masks(hierarchy);
     auto state = make_cell_data(hierarchy, 1, 1);
-    auto solution = make_cell_data(hierarchy, 1, 1);
     auto rhs = make_cell_data(hierarchy, 1, 0);
     auto acoef = make_cell_data(hierarchy, 1, 0);
     auto extinction = make_cell_data(hierarchy, 1, 1);
     auto diffusion = make_cell_data(hierarchy, 1, 1);
     auto cloud_fraction = make_cell_data(hierarchy, 1, 0);
-    auto bcoef = make_face_data(hierarchy);
-    auto robin_a = make_cell_data(hierarchy, 1, 0);
-    auto robin_b = make_cell_data(hierarchy, 1, 0);
-    auto robin_f = make_cell_data(hierarchy, 1, 0);
     initialize_cloud_fields(hierarchy, state, extinction, cloud_fraction);
-    set_level_data(solution, Real(0));
     set_level_data(rhs, Real(0));
     set_level_data(acoef, Real(1));
 
@@ -504,67 +682,46 @@ run_cloud (bool use_amr, int fine_n, int anderson_depth, Real anderson_beta,
     physical_boundary.hi = physical_boundary.lo;
     physical_boundary.lo_value = {AMREX_D_DECL(Real(0), Real(0), Real(0))};
     physical_boundary.hi_value = {AMREX_D_DECL(Real(0), Real(4), Real(0))};
-    auto const lobc = physical_boundary.lo;
-    auto const hibc = physical_boundary.hi;
-
     AMG<Real>::Options options;
     options.priority_seed = 1;
     MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap,
                         options);
-    AndersonMixer mixer(hierarchy, masks, anderson_depth, anderson_beta,
-                         Real(4));
     Real const nonlinear_tolerance =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-6);
-    int constexpr maximum_nonlinear_iterations = 250;
     Real constexpr incident_marshak_flux = Real(1);
-
-    for (int iteration = 0; iteration < maximum_nonlinear_iterations;
-         ++iteration) {
-        compute_diffusion(hierarchy, state, extinction, diffusion,
-                          physical_boundary, limited);
-        fill_face_coefficients(hierarchy, diffusion, &extinction, bcoef, true);
-        fill_robin_data(hierarchy, diffusion, robin_a, robin_b, robin_f);
-        RobinBCData robin{get_level_const_ptrs(robin_a),
-                          get_level_const_ptrs(robin_b),
-                          get_level_const_ptrs(robin_f)};
-        solver.setup(Real(0), Real(1), get_level_const_ptrs(acoef),
-                     get_face_const_ptrs(bcoef), lobc, hibc, {}, robin);
-        record_setup(result.solver, solver);
-        set_level_data(solution, Real(0));
-        auto const info = solver.solve(get_level_ptrs(solution),
-                                       get_level_const_ptrs(rhs),
-                                       linear_tolerance(), Real(0));
-        record_solve(result.solver, info);
-        result.final_nonlinear_change = composite_maximum_relative_change(
-            solution, state, masks);
-        ++result.nonlinear_iterations;
-        auto const [bottom_flux, top_flux] =
-            cloud_boundary_fluxes(hierarchy, solution, diffusion, masks);
-        amrex::ignore_unused(top_flux);
-        if (iteration_output) {
-            amrex::Print()
-                << "FLD cloud " << (use_amr ? "AMR" : "uniform")
-                << " nonlinear iteration=" << result.nonlinear_iterations
-                << ", method="
-                << (!limited ? "linear"
-                             : (anderson_depth > 0 ? "Anderson" : "Picard"))
-                << ", change=" << result.final_nonlinear_change
-                << ", transmission=" << bottom_flux / incident_marshak_flux
-                << ", GMRES iterations=" << info.iterations
-                << ", true relative residual=" << info.relative_residual
-                << '\n';
-        }
-        if (result.final_nonlinear_change <= nonlinear_tolerance) {
-            copy_level_data(state, solution);
-            average_down_hierarchy(state, hierarchy);
+    CloudNewtonProblem problem(hierarchy, masks, extinction, rhs, acoef,
+                               physical_boundary, limited, solver,
+                               result.solver);
+    for (int predictor = 0; predictor < 20; ++predictor) {
+        if (problem.predict(state, Real(0.7)) < Real(1.e-3)) {
             break;
         }
-        mixer.update(state, solution);
     }
-    result.anderson_steps = mixer.anderson_steps();
-    result.anderson_restarts = mixer.restarts();
+    NewtonKrylovOptions newton_options;
+    newton_options.nonlinear_tolerance = nonlinear_tolerance;
+    newton_options.maximum_nonlinear_iterations = 100;
+    newton_options.maximum_linear_iterations = 300;
+    newton_options.krylov_restart_length = 100;
+    newton_options.maximum_line_search_iterations = 24;
+    newton_options.linear_verbosity = iteration_output ? 2 : 0;
+    newton_options.centered_difference = false;
+    newton_options.problem_name = "The cloud-layer FLD system";
+    NewtonKrylovSolver<CloudNewtonProblem> newton(problem, newton_options);
+    auto const nonlinear = newton.solve(state);
+    result.final_nonlinear_change = nonlinear.final_change;
+    result.final_nonlinear_residual = nonlinear.final_residual_norm;
+    result.nonlinear_iterations = nonlinear.nonlinear_iterations;
+    result.total_newton_krylov_iterations =
+        nonlinear.total_linear_iterations;
+    result.maximum_newton_krylov_iterations =
+        nonlinear.maximum_linear_iterations;
+    result.solver.solves += nonlinear.nonlinear_iterations;
+    result.solver.total_iterations += nonlinear.total_linear_iterations;
+    result.solver.maximum_iterations = amrex::max(
+        result.solver.maximum_iterations,
+        nonlinear.maximum_linear_iterations);
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        result.final_nonlinear_change <= nonlinear_tolerance,
+        nonlinear.converged,
         "The cloud-layer FLD nonlinear iteration did not converge");
 
     compute_diffusion(hierarchy, state, extinction, diffusion,
@@ -578,6 +735,15 @@ run_cloud (bool use_amr, int fine_n, int anderson_depth, Real anderson_beta,
         composite_minimum_maximum(state, masks);
     result.minimum_energy = minimum;
     result.maximum_energy = maximum;
+    if (iteration_output) {
+        amrex::Print()
+            << "FLD cloud " << (use_amr ? "AMR" : "uniform")
+            << " Newton-Krylov iterations=" << result.nonlinear_iterations
+            << "/" << result.total_newton_krylov_iterations
+            << ", change=" << result.final_nonlinear_change
+            << ", residual=" << result.final_nonlinear_residual
+            << ", transmission=" << result.transmission << '\n';
+    }
     if (!plotfile_name.empty()) {
         write_cloud_plotfile(plotfile_name, hierarchy, state, extinction,
                              diffusion, cloud_fraction);

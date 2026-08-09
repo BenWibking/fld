@@ -52,9 +52,10 @@ struct CloudResult
     amrex::Real minimum_energy = amrex::Real(0);
     amrex::Real maximum_energy = amrex::Real(0);
     amrex::Real final_nonlinear_change = amrex::Real(0);
+    amrex::Real final_nonlinear_residual = amrex::Real(0);
     int nonlinear_iterations = 0;
-    int anderson_steps = 0;
-    int anderson_restarts = 0;
+    int total_newton_krylov_iterations = 0;
+    int maximum_newton_krylov_iterations = 0;
     amrex::Long mixed_cells = 0;
     amrex::Long cells = 0;
     SolverSummary solver;
@@ -100,8 +101,7 @@ struct ICASE2001Result
 
 GaussianResult run_gaussian (bool use_amr);
 
-CloudResult run_cloud (bool use_amr, int fine_n, int anderson_depth,
-                       amrex::Real anderson_beta, bool limited,
+CloudResult run_cloud (bool use_amr, int fine_n, bool limited,
                        bool iteration_output,
                        std::string const& plotfile_name);
 

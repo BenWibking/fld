@@ -47,9 +47,7 @@ main (int argc, char* argv[])
 
         run_mlabeclap_amg_checks();
 
-        int cloud_anderson_depth = 7;
         int cloud_fine_n = 128;
-        Real cloud_anderson_beta = Real(1);
         int cloud_iteration_output = 1;
         int cloud_flux_limiter = 1;
         int cloud_only = 0;
@@ -66,9 +64,7 @@ main (int argc, char* argv[])
         std::string cloud_plotfile_prefix = "plt";
         {
             ParmParse pp;
-            pp.query("cloud_anderson_depth", cloud_anderson_depth);
             pp.query("cloud_fine_n", cloud_fine_n);
-            pp.query("cloud_anderson_beta", cloud_anderson_beta);
             pp.query("cloud_iteration_output", cloud_iteration_output);
             pp.query("cloud_flux_limiter", cloud_flux_limiter);
             pp.query("cloud_only", cloud_only);
@@ -175,8 +171,7 @@ main (int argc, char* argv[])
 
             auto const run_selected_cloud = [&] (bool use_amr) {
                 return run_cloud(
-                    use_amr, cloud_fine_n, cloud_anderson_depth,
-                    cloud_anderson_beta, cloud_flux_limiter != 0,
+                    use_amr, cloud_fine_n, cloud_flux_limiter != 0,
                     cloud_iteration_output != 0,
                     cloud_plotfile_prefix.empty()
                         ? std::string()
@@ -187,17 +182,15 @@ main (int argc, char* argv[])
             if (cloud_case == "uniform") {
                 auto const cloud_uniform = run_selected_cloud(false);
                 amrex::Print()
-                    << "FLD cloud Anderson benchmark: depth="
-                    << cloud_anderson_depth
-                    << ", fine_n=" << cloud_fine_n
-                    << ", beta=" << cloud_anderson_beta
+                    << "FLD cloud Newton-Krylov benchmark: fine_n="
+                    << cloud_fine_n
                     << ", limiter="
                     << (cloud_flux_limiter != 0 ? "on" : "off")
-                    << ", uniform transmission/iterations/Anderson/restarts="
+                    << ", uniform transmission/Newton/Krylov iterations="
                     << cloud_uniform.transmission << "/"
                     << cloud_uniform.nonlinear_iterations << "/"
-                    << cloud_uniform.anderson_steps << "/"
-                    << cloud_uniform.anderson_restarts << std::endl;
+                    << cloud_uniform.total_newton_krylov_iterations
+                    << std::endl;
                 amrex::Finalize();
                 return 0;
             }
@@ -205,17 +198,15 @@ main (int argc, char* argv[])
             if (cloud_case == "amr") {
                 auto const cloud_amr = run_selected_cloud(true);
                 amrex::Print()
-                    << "FLD cloud Anderson benchmark: depth="
-                    << cloud_anderson_depth
-                    << ", fine_n=" << cloud_fine_n
-                    << ", beta=" << cloud_anderson_beta
+                    << "FLD cloud Newton-Krylov benchmark: fine_n="
+                    << cloud_fine_n
                     << ", limiter="
                     << (cloud_flux_limiter != 0 ? "on" : "off")
-                    << ", AMR transmission/iterations/Anderson/restarts="
+                    << ", AMR transmission/Newton/Krylov iterations="
                     << cloud_amr.transmission << "/"
                     << cloud_amr.nonlinear_iterations << "/"
-                    << cloud_amr.anderson_steps << "/"
-                    << cloud_amr.anderson_restarts << std::endl;
+                    << cloud_amr.total_newton_krylov_iterations
+                    << std::endl;
                 amrex::Finalize();
                 return 0;
             }
@@ -224,22 +215,18 @@ main (int argc, char* argv[])
                 run_selected_cloud(false);
             auto const cloud_amr = run_selected_cloud(true);
             amrex::Print()
-                << "FLD cloud Anderson benchmark: depth="
-                << cloud_anderson_depth
-                << ", fine_n=" << cloud_fine_n
-                << ", beta=" << cloud_anderson_beta
+                << "FLD cloud Newton-Krylov benchmark: fine_n="
+                << cloud_fine_n
                 << ", limiter="
                 << (cloud_flux_limiter != 0 ? "on" : "off")
-                << ", uniform transmission/iterations/Anderson/restarts="
+                << ", uniform transmission/Newton/Krylov iterations="
                 << cloud_uniform.transmission << "/"
                 << cloud_uniform.nonlinear_iterations << "/"
-                << cloud_uniform.anderson_steps << "/"
-                << cloud_uniform.anderson_restarts
-                << ", AMR transmission/iterations/Anderson/restarts="
+                << cloud_uniform.total_newton_krylov_iterations
+                << ", AMR transmission/Newton/Krylov iterations="
                 << cloud_amr.transmission << "/"
                 << cloud_amr.nonlinear_iterations << "/"
-                << cloud_amr.anderson_steps << "/"
-                << cloud_amr.anderson_restarts << std::endl;
+                << cloud_amr.total_newton_krylov_iterations << std::endl;
             amrex::Finalize();
             return 0;
         }
@@ -265,8 +252,7 @@ main (int argc, char* argv[])
                             Real(2) * gaussian_uniform.relative_l1_error);
 
         auto const cloud_uniform =
-            run_cloud(false, cloud_fine_n, cloud_anderson_depth,
-                      cloud_anderson_beta, true,
+            run_cloud(false, cloud_fine_n, true,
                       cloud_iteration_output != 0, std::string());
         amrex::Print() << "FLD cloud uniform: cells=" << cloud_uniform.cells
                        << ", transmission=" << cloud_uniform.transmission
@@ -276,18 +262,19 @@ main (int argc, char* argv[])
                        << cloud_uniform.cloudy_area_relative_error
                        << ", E range=[" << cloud_uniform.minimum_energy << ","
                        << cloud_uniform.maximum_energy << "]"
-                       << ", nonlinear iterations/final fixed-point residual="
+                       << ", Newton iterations/change/residual="
                        << cloud_uniform.nonlinear_iterations << "/"
-                       << cloud_uniform.final_nonlinear_change
-                       << ", Anderson steps/restarts="
-                       << cloud_uniform.anderson_steps << "/"
-                       << cloud_uniform.anderson_restarts << ", ";
+                       << cloud_uniform.final_nonlinear_change << "/"
+                       << cloud_uniform.final_nonlinear_residual
+                       << ", Newton-Krylov iterations total/max="
+                       << cloud_uniform.total_newton_krylov_iterations << "/"
+                       << cloud_uniform.maximum_newton_krylov_iterations
+                       << ", ";
         print_solver_summary(cloud_uniform.solver);
         amrex::Print() << '\n';
 
         auto const cloud_amr =
-            run_cloud(true, cloud_fine_n, cloud_anderson_depth,
-                      cloud_anderson_beta, true,
+            run_cloud(true, cloud_fine_n, true,
                       cloud_iteration_output != 0, std::string());
         amrex::Print() << "FLD cloud AMR: cells=" << cloud_amr.cells
                        << ", transmission=" << cloud_amr.transmission
@@ -297,12 +284,13 @@ main (int argc, char* argv[])
                        << cloud_amr.cloudy_area_relative_error
                        << ", E range=[" << cloud_amr.minimum_energy << ","
                        << cloud_amr.maximum_energy << "]"
-                       << ", nonlinear iterations/final fixed-point residual="
+                       << ", Newton iterations/change/residual="
                        << cloud_amr.nonlinear_iterations << "/"
-                       << cloud_amr.final_nonlinear_change
-                       << ", Anderson steps/restarts="
-                       << cloud_amr.anderson_steps << "/"
-                       << cloud_amr.anderson_restarts << ", ";
+                       << cloud_amr.final_nonlinear_change << "/"
+                       << cloud_amr.final_nonlinear_residual
+                       << ", Newton-Krylov iterations total/max="
+                       << cloud_amr.total_newton_krylov_iterations << "/"
+                       << cloud_amr.maximum_newton_krylov_iterations << ", ";
         print_solver_summary(cloud_amr.solver);
         amrex::Print() << '\n';
 

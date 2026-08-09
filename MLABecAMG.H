@@ -144,6 +144,12 @@ class MLABecLapAMG
     void apply (amrex::Vector<amrex::MultiFab*> const& output,
                 amrex::Vector<amrex::MultiFab const*> const& input) const;
 
+    /** Compute `A * input - (rhs + inhomogeneous boundary source)`. */
+    void residual (
+        amrex::Vector<amrex::MultiFab*> const& output,
+        amrex::Vector<amrex::MultiFab const*> const& input,
+        amrex::Vector<amrex::MultiFab const*> const& rhs) const;
+
     [[nodiscard]] amrex::AMG<amrex::Real>::Diagnostics const& diagnostics ()
         const noexcept;
 

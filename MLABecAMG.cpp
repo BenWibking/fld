@@ -1013,6 +1013,45 @@ struct MLABecLapAMG::Impl
         }
     }
 
+    void residual (Vector<MultiFab*> const& output,
+                   Vector<MultiFab const*> const& input,
+                   Vector<MultiFab const*> const& rhs) const
+    {
+        apply(output, input);
+        int const nlevels = topology.numLevels();
+        AMREX_ALWAYS_ASSERT(static_cast<int>(rhs.size()) == nlevels);
+        auto const& geom = topology.geometry();
+        auto const& cells = topology.cells();
+        Long const nlocal = topology.localRows();
+        Vector<std::unique_ptr<MultiFab>> host_output(nlevels);
+        Vector<std::unique_ptr<MultiFab>> host_rhs(nlevels);
+        for (int level = 0; level < nlevels; ++level) {
+            AMREX_ALWAYS_ASSERT(rhs[level] != nullptr);
+            AMREX_ALWAYS_ASSERT(rhs[level]->boxArray() ==
+                                topology.grids()[level]);
+            AMREX_ALWAYS_ASSERT(rhs[level]->nComp() == 1);
+            AMREX_ALWAYS_ASSERT(rhs[level]->nGrow() == 0);
+            host_output[level] =
+                stage_multifab(*output[level], 0, geom[level].periodicity());
+            host_rhs[level] =
+                stage_multifab(*rhs[level], 0, geom[level].periodicity());
+        }
+        for (Long row = 0; row < nlocal; ++row) {
+            auto const& cell = cells[row];
+            host_output[cell.level]->atLocalIdx(cell.local_grid)(cell.index) -=
+                host_rhs[cell.level]->atLocalIdx(cell.local_grid)(cell.index) +
+                boundary_rhs[row] / cell.volume;
+        }
+        for (int level = 0; level < nlevels; ++level) {
+            MultiFab::Copy(*output[level], *host_output[level], 0, 0, 1, 0);
+        }
+        for (int level = nlevels - 2; level >= 0; --level) {
+            amrex::average_down(*output[level + 1], *output[level],
+                                geom[level + 1], geom[level], 0, 1,
+                                topology.refRatio()[level]);
+        }
+    }
+
     CompositeGridTopology topology;
     AMG<Real>::Options options;
     MLABecPreconditioner selected_preconditioner =
@@ -1129,6 +1168,14 @@ MLABecLapAMG::apply (Vector<MultiFab*> const& output,
                      Vector<MultiFab const*> const& input) const
 {
     m_impl->apply(output, input);
+}
+
+void
+MLABecLapAMG::residual (Vector<MultiFab*> const& output,
+                        Vector<MultiFab const*> const& input,
+                        Vector<MultiFab const*> const& rhs) const
+{
+    m_impl->residual(output, input, rhs);
 }
 
 AMG<Real>::Diagnostics const&

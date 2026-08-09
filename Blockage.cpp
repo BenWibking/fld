@@ -1,4 +1,5 @@
 #include "FLDTestCommon.H"
+#include "NewtonKrylovSolver.H"
 
 #include <AMReX_GMRES.H>
 #include <AMReX_MFIter.H>
@@ -533,40 +534,90 @@ add_exchange_coupling (LevelData& temperature_rhs,
     }
 }
 
-class CoupledNewtonOperator
+class CoupledNewtonProblem
 {
   public:
+    using State = CoupledVector;
     using RT = Real;
 
-    CoupledNewtonOperator (
+    CoupledNewtonProblem (
         DiffusionHierarchy const& hierarchy, Vector<iMultiFab> const& masks,
-        CoupledVector const& state,
         LevelData const& old_energy, LevelData const& old_temperature,
-        LevelData& atomic_number, LevelData const& base_sigma, Real dt,
+        LevelData& atomic_number, LevelData& sigma, Real dt,
         MLABecLapAMG& radiation_solver, MLABecLapAMG& material_solver,
-        SolverSummary& summary)
-        : m_hierarchy(hierarchy), m_masks(masks), m_state(state),
-          m_old_energy(old_energy),
+        SolverSummary& summary, LevelData& energy_acoef,
+        LevelData& temperature_acoef, FaceData& radiation_bcoef,
+        FaceData& material_bcoef, LevelData& robin_a, LevelData& robin_b,
+        LevelData& robin_f,
+        Array<LinOpBCType, AMREX_SPACEDIM> radiation_lo,
+        Array<LinOpBCType, AMREX_SPACEDIM> radiation_hi,
+        Array<LinOpBCType, AMREX_SPACEDIM> insulated)
+        : m_hierarchy(hierarchy), m_masks(masks), m_old_energy(old_energy),
           m_old_temperature(old_temperature), m_atomic_number(atomic_number),
-          m_base_sigma(base_sigma), m_dt(dt),
+          m_sigma(sigma), m_dt(dt),
           m_radiation_solver(radiation_solver),
           m_material_solver(material_solver), m_summary(summary),
+          m_energy_acoef(energy_acoef),
+          m_temperature_acoef(temperature_acoef),
+          m_radiation_bcoef(radiation_bcoef),
+          m_material_bcoef(material_bcoef), m_robin_a(robin_a),
+          m_robin_b(robin_b), m_robin_f(robin_f),
+          m_radiation_lo(radiation_lo), m_radiation_hi(radiation_hi),
+          m_insulated(insulated),
           m_trial_sigma(make_cell_data(hierarchy, 1, 1)),
           m_trial_radiation_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_trial_material_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_trial_radiation_bcoef(make_face_data(hierarchy)),
           m_trial_material_bcoef(make_face_data(hierarchy))
+    {}
+
+    void prepare (State const& state)
     {
         auto const [minimum_energy, maximum_energy] =
-            composite_minimum_maximum(state.energy, masks);
+            composite_minimum_maximum(state.energy, m_masks);
         auto const [minimum_temperature, maximum_temperature] =
-            composite_minimum_maximum(state.temperature, masks);
-        static_cast<void>(minimum_energy);
-        static_cast<void>(minimum_temperature);
+            composite_minimum_maximum(state.temperature, m_masks);
+        amrex::ignore_unused(minimum_energy, minimum_temperature);
         m_energy_scale = amrex::max(maximum_energy, initial_radiation_energy);
         m_temperature_scale = amrex::max(
             maximum_temperature,
             std::sqrt(std::sqrt(initial_radiation_energy)));
+
+        fill_newton_preconditioner_coefficients(
+            state, m_sigma, m_dt, m_energy_acoef, m_temperature_acoef);
+        fill_radiation_robin_data(
+            m_hierarchy, m_sigma, m_robin_a, m_robin_b, m_robin_f);
+        RobinBCData robin{get_level_const_ptrs(m_robin_a),
+                          get_level_const_ptrs(m_robin_b),
+                          get_level_const_ptrs(m_robin_f)};
+        m_radiation_solver.setup(
+            Real(1), Real(1), get_level_const_ptrs(m_energy_acoef),
+            get_face_const_ptrs(m_radiation_bcoef), m_radiation_lo,
+            m_radiation_hi, {}, robin);
+        record_setup(m_summary, m_radiation_solver);
+        m_material_solver.setup(
+            Real(1), Real(1), get_level_const_ptrs(m_temperature_acoef),
+            get_face_const_ptrs(m_material_bcoef), m_insulated, m_insulated,
+            {});
+        record_setup(m_summary, m_material_solver);
+    }
+
+    void residual (State const& state, State& output)
+    {
+        fill_coupled_residual(
+            m_hierarchy, m_masks, state, m_old_energy, m_old_temperature,
+            m_atomic_number, m_dt, output, m_sigma,
+            m_trial_radiation_diffusion, m_trial_material_diffusion,
+            m_radiation_bcoef, m_material_bcoef);
+    }
+
+    void linearized_residual (State const& state, State& output)
+    {
+        fill_coupled_residual(
+            m_hierarchy, m_masks, state, m_old_energy, m_old_temperature,
+            m_atomic_number, m_dt, output, m_trial_sigma,
+            m_trial_radiation_diffusion, m_trial_material_diffusion,
+            m_trial_radiation_bcoef, m_trial_material_bcoef);
     }
 
     CoupledVector makeVecRHS () const
@@ -579,42 +630,13 @@ class CoupledNewtonOperator
         return make_coupled_vector(m_hierarchy, 1);
     }
 
-    void apply (CoupledVector& output, CoupledVector const& direction)
-    {
-        Real const direction_norm = norm2(direction);
-        if (direction_norm == Real(0)) {
-            setToZero(output);
-            return;
-        }
-        Real const step = std::cbrt(std::numeric_limits<Real>::epsilon()) *
-                          (Real(1) + norm2(m_state)) / direction_norm;
-        CoupledVector trial_plus = clone_coupled_vector(m_state);
-        CoupledVector trial_minus = clone_coupled_vector(m_state);
-        increment_coupled_vector(trial_plus, direction, step);
-        increment_coupled_vector(trial_minus, direction, -step);
-        fill_coupled_residual(
-            m_hierarchy, m_masks, trial_plus, m_old_energy, m_old_temperature,
-            m_atomic_number, m_dt, output, m_trial_sigma,
-            m_trial_radiation_diffusion, m_trial_material_diffusion,
-            m_trial_radiation_bcoef, m_trial_material_bcoef);
-        CoupledVector residual_minus = makeVecRHS();
-        fill_coupled_residual(
-            m_hierarchy, m_masks, trial_minus, m_old_energy,
-            m_old_temperature, m_atomic_number, m_dt, residual_minus,
-            m_trial_sigma, m_trial_radiation_diffusion,
-            m_trial_material_diffusion, m_trial_radiation_bcoef,
-            m_trial_material_bcoef);
-        increment_coupled_vector(output, residual_minus, Real(-1));
-        scale_coupled_vector(output, Real(0.5) / step);
-    }
-
-    void precond (CoupledVector& output, CoupledVector const& rhs)
+    void precondition (CoupledVector& output, CoupledVector const& rhs)
     {
         set_coupled_vector(output, Real(0));
         m_radiation_solver.precondition(
             get_level_ptrs(output.energy), get_level_const_ptrs(rhs.energy));
         LevelData temperature_rhs = clone_level_data(rhs.temperature);
-        add_exchange_coupling(temperature_rhs, output.energy, m_base_sigma);
+        add_exchange_coupling(temperature_rhs, output.energy, m_sigma);
         m_material_solver.precondition(
             get_level_ptrs(output.temperature),
             get_level_const_ptrs(temperature_rhs));
@@ -663,18 +685,55 @@ class CoupledNewtonOperator
         set_coupled_vector(vector, Real(0));
     }
 
+    CoupledVector clone (CoupledVector const& state) const
+    {
+        return clone_coupled_vector(state);
+    }
+
+    void fill_candidate (CoupledVector& candidate,
+                         CoupledVector const& state,
+                         CoupledVector const& correction,
+                         Real step_length) const
+    {
+        fill_positive_newton_candidate(candidate, state, correction,
+                                       step_length);
+    }
+
+    bool admissible (CoupledVector const& state) const
+    {
+        return coupled_positive_finite(state, m_masks);
+    }
+
+    Real relative_change (CoupledVector const& lhs,
+                          CoupledVector const& rhs) const
+    {
+        return amrex::max(
+            composite_maximum_relative_change(lhs.energy, rhs.energy, m_masks),
+            composite_maximum_relative_change(lhs.temperature,
+                                              rhs.temperature, m_masks));
+    }
+
   private:
     DiffusionHierarchy const& m_hierarchy;
     Vector<iMultiFab> const& m_masks;
-    CoupledVector const& m_state;
     LevelData const& m_old_energy;
     LevelData const& m_old_temperature;
     LevelData& m_atomic_number;
-    LevelData const& m_base_sigma;
+    LevelData& m_sigma;
     Real m_dt;
     MLABecLapAMG& m_radiation_solver;
     MLABecLapAMG& m_material_solver;
     SolverSummary& m_summary;
+    LevelData& m_energy_acoef;
+    LevelData& m_temperature_acoef;
+    FaceData& m_radiation_bcoef;
+    FaceData& m_material_bcoef;
+    LevelData& m_robin_a;
+    LevelData& m_robin_b;
+    LevelData& m_robin_f;
+    Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_lo;
+    Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_hi;
+    Array<LinOpBCType, AMREX_SPACEDIM> m_insulated;
     LevelData m_trial_sigma;
     LevelData m_trial_radiation_diffusion;
     LevelData m_trial_material_diffusion;
@@ -814,8 +873,6 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     CoupledVector state = make_coupled_vector(hierarchy, 1);
     auto old_energy = make_cell_data(hierarchy, 1, 1);
     auto old_temperature = make_cell_data(hierarchy, 1, 1);
-    CoupledVector residual = make_coupled_vector(hierarchy, 0);
-    CoupledVector candidate_residual = make_coupled_vector(hierarchy, 0);
     CoupledVector predictor_solution = make_coupled_vector(hierarchy, 1);
     auto atomic_number = make_cell_data(hierarchy, 1, 1);
     auto sigma = make_cell_data(hierarchy, 1, 1);
@@ -917,109 +974,33 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
                 break;
             }
         }
-        fill_coupled_residual(
-            hierarchy, masks, state, old_energy, old_temperature,
-            atomic_number, dt, residual, sigma, radiation_diffusion,
-            material_diffusion, radiation_bcoef, material_bcoef);
-        bool converged = false;
-        int step_iterations = 0;
-        for (int iteration = 0; iteration < maximum_nonlinear_iterations;
-             ++iteration) {
-            fill_newton_preconditioner_coefficients(
-                state, sigma, dt, energy_acoef, temperature_acoef);
-            fill_radiation_robin_data(hierarchy, sigma, robin_a, robin_b,
-                                      robin_f);
-            RobinBCData robin{get_level_const_ptrs(robin_a),
-                              get_level_const_ptrs(robin_b),
-                              get_level_const_ptrs(robin_f)};
-            radiation_solver.setup(
-                Real(1), Real(1), get_level_const_ptrs(energy_acoef),
-                get_face_const_ptrs(radiation_bcoef), radiation_lo,
-                radiation_hi, {}, robin);
-            record_setup(result.solver, radiation_solver);
-            material_solver.setup(
-                Real(1), Real(1), get_level_const_ptrs(temperature_acoef),
-                get_face_const_ptrs(material_bcoef), insulated, insulated,
-                {});
-            record_setup(result.solver, material_solver);
-
-            CoupledNewtonOperator newton_operator(
-                hierarchy, masks, state, old_energy,
-                old_temperature, atomic_number, sigma, dt, radiation_solver,
-                material_solver, result.solver);
-            GMRES<CoupledVector, CoupledNewtonOperator> gmres;
-            gmres.define(newton_operator);
-            gmres.setRestartLength(30);
-            gmres.setMaxIters(100);
-            CoupledVector correction = newton_operator.makeVecLHS();
-            newton_operator.setToZero(correction);
-            CoupledVector linear_rhs = newton_operator.makeVecRHS();
-            newton_operator.linComb(linear_rhs, Real(-1), residual, Real(0),
-                                    residual);
-            gmres.solve(correction, linear_rhs, Real(1.e-4), Real(0));
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                gmres.getStatus() == 0,
-                "The ICASE 2001-12 coupled Newton linear solve did not "
-                "converge");
-            result.total_newton_krylov_iterations += gmres.getNumIters();
-            result.maximum_newton_krylov_iterations = amrex::max(
-                result.maximum_newton_krylov_iterations,
-                gmres.getNumIters());
-
-            Real const residual_norm = coupled_norm(
-                residual, hierarchy, masks);
-            Real step_length = Real(1);
-            bool accepted = false;
-            Real accepted_residual_norm = residual_norm;
-            CoupledVector candidate = clone_coupled_vector(state);
-            for (int line_search = 0; line_search < 14; ++line_search) {
-                fill_positive_newton_candidate(
-                    candidate, state, correction, step_length);
-                if (coupled_positive_finite(candidate, masks)) {
-                    fill_coupled_residual(
-                        hierarchy, masks, candidate, old_energy,
-                        old_temperature, atomic_number, dt,
-                        candidate_residual, sigma, radiation_diffusion,
-                        material_diffusion, radiation_bcoef, material_bcoef);
-                    Real const candidate_norm = coupled_norm(
-                        candidate_residual, hierarchy, masks);
-                    if (candidate_norm <=
-                        (Real(1) - Real(1.e-4) * step_length) *
-                            residual_norm) {
-                        accepted = true;
-                        accepted_residual_norm = candidate_norm;
-                        break;
-                    }
-                }
-                step_length *= Real(0.5);
-            }
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                accepted,
-                "The ICASE 2001-12 coupled Newton line search failed");
-
-            Real const energy_change = composite_maximum_relative_change(
-                candidate.energy, state.energy, masks);
-            Real const temperature_change = composite_maximum_relative_change(
-                candidate.temperature, state.temperature, masks);
-            result.final_nonlinear_change = amrex::max(
-                energy_change, temperature_change);
-            copy_coupled_vector(state, candidate);
-            copy_coupled_vector(residual, candidate_residual);
-            ++step_iterations;
-            ++result.total_nonlinear_iterations;
-            if (result.final_nonlinear_change <= nonlinear_tolerance &&
-                accepted_residual_norm <= nonlinear_tolerance) {
-                converged = true;
-                result.maximum_coupled_residual = amrex::max(
-                    result.maximum_coupled_residual,
-                    accepted_residual_norm);
-                break;
-            }
-        }
+        CoupledNewtonProblem problem(
+            hierarchy, masks, old_energy, old_temperature, atomic_number,
+            sigma, dt, radiation_solver, material_solver, result.solver,
+            energy_acoef, temperature_acoef, radiation_bcoef, material_bcoef,
+            robin_a, robin_b, robin_f, radiation_lo, radiation_hi,
+            insulated);
+        NewtonKrylovOptions options;
+        options.nonlinear_tolerance = nonlinear_tolerance;
+        options.maximum_nonlinear_iterations =
+            maximum_nonlinear_iterations;
+        options.problem_name = "The ICASE 2001-12 coupled system";
+        NewtonKrylovSolver<CoupledNewtonProblem> newton(problem, options);
+        auto const solve = newton.solve(state);
+        int const step_iterations = solve.nonlinear_iterations;
+        result.final_nonlinear_change = solve.final_change;
+        result.total_nonlinear_iterations += solve.nonlinear_iterations;
+        result.total_newton_krylov_iterations +=
+            solve.total_linear_iterations;
+        result.maximum_newton_krylov_iterations = amrex::max(
+            result.maximum_newton_krylov_iterations,
+            solve.maximum_linear_iterations);
+        result.maximum_coupled_residual = amrex::max(
+            result.maximum_coupled_residual, solve.final_residual_norm);
         result.maximum_nonlinear_iterations = amrex::max(
             result.maximum_nonlinear_iterations, step_iterations);
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            converged,
+            solve.converged,
             "The ICASE 2001-12 coupled nonlinear iteration did not converge");
 
         // The exchange source is equal and opposite in the E and T
