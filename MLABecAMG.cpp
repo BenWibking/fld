@@ -411,16 +411,21 @@ struct MLABecLapAMG::Impl
         int const nlevels = topology.numLevels();
         auto const& geom = topology.geometry();
         auto const& grids = topology.grids();
+        auto const& dmap = topology.dmap();
         AMREX_ALWAYS_ASSERT(static_cast<int>(acoef.size()) == nlevels);
         AMREX_ALWAYS_ASSERT(static_cast<int>(bcoef.size()) == nlevels);
         for (int level = 0; level < nlevels; ++level) {
             AMREX_ALWAYS_ASSERT(acoef[level] != nullptr);
             AMREX_ALWAYS_ASSERT(acoef[level]->boxArray() == grids[level]);
+            AMREX_ALWAYS_ASSERT(acoef[level]->DistributionMap() ==
+                                dmap[level]);
             AMREX_ALWAYS_ASSERT(acoef[level]->nComp() == 1);
             for (int direction = 0; direction < AMREX_SPACEDIM;
                  ++direction) {
                 AMREX_ALWAYS_ASSERT(bcoef[level][direction] != nullptr);
                 AMREX_ALWAYS_ASSERT(bcoef[level][direction]->nComp() == 1);
+                AMREX_ALWAYS_ASSERT(bcoef[level][direction]->DistributionMap() ==
+                                    dmap[level]);
                 AMREX_ALWAYS_ASSERT(
                     bcoef[level][direction]->ixType().nodeCentered(direction));
                 BoxArray expected = grids[level];
@@ -457,6 +462,8 @@ struct MLABecLapAMG::Impl
             for (int level = 0; level < nlevels; ++level) {
                 AMREX_ALWAYS_ASSERT(level_bc[level] != nullptr &&
                                     level_bc[level]->boxArray() == grids[level] &&
+                                    level_bc[level]->DistributionMap() ==
+                                        dmap[level] &&
                                     level_bc[level]->nComp() == 1 &&
                                     level_bc[level]->nGrow() >= 1);
             }
@@ -473,6 +480,10 @@ struct MLABecLapAMG::Impl
                     robin.a[level]->boxArray() == grids[level] &&
                     robin.b[level]->boxArray() == grids[level] &&
                     robin.f[level]->boxArray() == grids[level]);
+                AMREX_ALWAYS_ASSERT(
+                    robin.a[level]->DistributionMap() == dmap[level] &&
+                    robin.b[level]->DistributionMap() == dmap[level] &&
+                    robin.f[level]->DistributionMap() == dmap[level]);
                 AMREX_ALWAYS_ASSERT(robin.a[level]->nComp() == 1 &&
                                     robin.b[level]->nComp() == 1 &&
                                     robin.f[level]->nComp() == 1);
@@ -660,29 +671,31 @@ struct MLABecLapAMG::Impl
         matrix.reset();
         matrix = std::make_unique<SpMatrix<Real>>(
             topology.partition(), topology.partition(), std::move(device));
-        if (selected_preconditioner == MLABecPreconditioner::AMG) {
-            if (selected_amg_backend == MLABecAMGBackend::Native) {
-                amg = std::make_unique<AMG<Real>>(*matrix, options);
-                amg->setup();
-            }
+        if (!matrix_only) {
+            if (selected_preconditioner == MLABecPreconditioner::AMG) {
+                if (selected_amg_backend == MLABecAMGBackend::Native) {
+                    amg = std::make_unique<AMG<Real>>(*matrix, options);
+                    amg->setup();
+                }
 #ifdef AMREX_USE_HYPRE
-            else {
-                boomeramg = std::make_unique<BoomerAMGPreconditioner>(
-                    *matrix, options, verbose);
-            }
+                else {
+                    boomeramg = std::make_unique<BoomerAMGPreconditioner>(
+                        *matrix, options, verbose);
+                }
 #endif
-        } else {
-            setup_mlmg_preconditioner(ascalar, bscalar, acoef_ptrs,
-                                      bcoef_ptrs, lobc_input, hibc_input,
-                                      boundary);
+            } else {
+                setup_mlmg_preconditioner(ascalar, bscalar, acoef_ptrs,
+                                          bcoef_ptrs, lobc_input, hibc_input,
+                                          boundary);
+            }
+            gmres = std::make_unique<GMRES_MV<Real>>(matrix.get());
+            gmres->setPrecond(
+                [this] (AlgVector<Real>& lhs, AlgVector<Real> const& rhs)
+                { apply_preconditioner(lhs, rhs); });
+            gmres->getGMRES().setRestartLength(restart_length);
+            gmres->getGMRES().setMaxIters(max_iter);
+            gmres->setVerbose(verbose);
         }
-        gmres = std::make_unique<GMRES_MV<Real>>(matrix.get());
-        gmres->setPrecond(
-            [this] (AlgVector<Real>& lhs, AlgVector<Real> const& rhs)
-            { apply_preconditioner(lhs, rhs); });
-        gmres->getGMRES().setRestartLength(restart_length);
-        gmres->getGMRES().setMaxIters(max_iter);
-        gmres->setVerbose(verbose);
 
         assembly.coarse_fine_connections =
             numerical.local_coarse_fine_connections;
@@ -1061,6 +1074,7 @@ struct MLABecLapAMG::Impl
     int verbose = 0;
     int max_iter = 500;
     int restart_length = 50;
+    bool matrix_only = false;
     double last_setup_seconds = 0.0;
     int current_preconditioner_applications = 0;
     double current_preconditioner_seconds = 0.0;
@@ -1132,6 +1146,12 @@ MLABecLapAMG::setMaxIter (int value)
     if (m_impl->gmres) {
         m_impl->gmres->getGMRES().setMaxIters(value);
     }
+}
+
+void
+MLABecLapAMG::setMatrixOnly (bool value)
+{
+    m_impl->matrix_only = value;
 }
 
 void

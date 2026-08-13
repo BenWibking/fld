@@ -170,7 +170,10 @@ initialize_cloud_fields (DiffusionHierarchy const& hierarchy,
                          LevelData& state, LevelData& extinction,
                          LevelData& cloud_fraction)
 {
-    Real constexpr clear_extinction = Real(0.1);
+    // Extinction (opacity) contrast of 1e6: the diffusion coefficient is
+    // D = lambda / extinction, so in the optically-thick limit D jumps from
+    // 1/(3*1000) inside the clouds to 1/(3*0.001) in the clear background.
+    Real constexpr clear_extinction = Real(0.001);
     Real constexpr cloudy_extinction = Real(1000);
     for (int level = 0; level < static_cast<int>(state.size()); ++level) {
         auto const dx = hierarchy.geom[level].CellSizeArray();
@@ -324,7 +327,9 @@ class CloudNewtonProblem
           m_trial_robin_a(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_b(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_f(make_cell_data(hierarchy, 1, 0))
-    {}
+    {
+        m_trial_solver.setMatrixOnly(true);
+    }
 
     void prepare (State const& state)
     {

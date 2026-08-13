@@ -546,14 +546,23 @@ fill_face_coefficients (DiffusionHierarchy const& hierarchy,
                     Real const chil = chi(il, jl, k);
                     Real const chir = chi(ir, jr, k);
                     Real const arithmetic = Real(0.5) * (chil + chir);
-                    Real const harmonic =
-                        Real(2) * chil * chir / (chil + chir);
+                    Real const harmonic = (chil + chir) > Real(0)
+                                              ? Real(2) * chil * chir /
+                                                    (chil + chir)
+                                              : Real(0);
                     Real const surface = Real(4) / (Real(3) * dx[direction]);
                     Real const face_extinction = amrex::min(
                         arithmetic, amrex::max(harmonic, surface));
-                    Real const face_limiter =
-                        amrex::max(dl * chil, dr * chir);
-                    b(i, j, k) = face_limiter / face_extinction;
+                    // dl*chil is the left cell's flux limiter (D*chi ==
+                    // lambda).  A zero-extinction cell makes dl NaN/infinite,
+                    // so skip the product for transparent cells to avoid
+                    // NaN*0; the transparent limit carries no limiter.
+                    Real const face_limiter = amrex::max(
+                        chil > Real(0) ? dl * chil : Real(0),
+                        chir > Real(0) ? dr * chir : Real(0));
+                    b(i, j, k) =
+                        face_limiter /
+                        amrex::max(face_extinction, Real(1.e-30));
                 });
             }
         }

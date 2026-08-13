@@ -106,6 +106,7 @@ class MLABecLapAMG
 
     void setVerbose (int value);
     void setMaxIter (int value);
+    void setMatrixOnly (bool value);
 
     void setup (
         amrex::Real ascalar, amrex::Real bscalar,
