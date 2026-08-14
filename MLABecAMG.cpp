@@ -155,6 +155,7 @@ class BoomerAMGPreconditioner
         : partition(matrix.partition()), nlocal(matrix.numLocalRows()),
           row_ids(nlocal), rhs_values(nlocal), solution_values(nlocal)
     {
+        BL_PROFILE("BoomerAMG::setup()");
         static_assert(std::is_same_v<Real, HYPRE_Real>);
         AMREX_ALWAYS_ASSERT(
             nlocal <= std::numeric_limits<HYPRE_Int>::max());
@@ -287,6 +288,7 @@ class BoomerAMGPreconditioner
 
     void apply (AlgVector<Real>& output, AlgVector<Real> const& input)
     {
+        BL_PROFILE("BoomerAMG::apply()");
         AMREX_ALWAYS_ASSERT(output.partition() == partition &&
                             input.partition() == partition);
         auto const* pinput = input.data();
@@ -378,6 +380,8 @@ struct MLABecLapAMG::Impl
         pp.query("verbose", verbose);
         pp.query("max_iter", max_iter);
         pp.query("restart_length", restart_length);
+        pp.query("chebyshev_eigenvalue_iterations",
+                 options.chebyshev_eigenvalue_iterations);
         if (query_configuration) {
             std::string name =
                 fld_test::preconditioner_name(selected_preconditioner);
@@ -674,6 +678,7 @@ struct MLABecLapAMG::Impl
         if (!matrix_only) {
             if (selected_preconditioner == MLABecPreconditioner::AMG) {
                 if (selected_amg_backend == MLABecAMGBackend::Native) {
+                    options.symmetric = true;  // the ABec operator is symmetric
                     amg = std::make_unique<AMG<Real>>(*matrix, options);
                     amg->setup();
                 }
