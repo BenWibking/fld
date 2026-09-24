@@ -54,8 +54,10 @@ main (int argc, char* argv[])
         int cloud_flux_limiter = 1;
         int cloud_write_plotfile = 1;
         int cloud_only = 0;
+        std::string gaussian_case;
         int front_only = 0;
         int front_reverse = 0;
+        std::string front_preconditioner;
         int icase_only = 0;
         int icase_n_cell = 87;
         int icase_steps = 1000;
@@ -73,8 +75,10 @@ main (int argc, char* argv[])
             pp.query("cloud_flux_limiter", cloud_flux_limiter);
             pp.query("cloud_write_plotfile", cloud_write_plotfile);
             pp.query("cloud_only", cloud_only);
+            pp.query("gaussian_case", gaussian_case);
             pp.query("front_only", front_only);
             pp.query("front_reverse", front_reverse);
+            pp.query("front_preconditioner", front_preconditioner);
             pp.query("icase_only", icase_only);
             pp.query("icase_n_cell", icase_n_cell);
             pp.query("icase_steps", icase_steps);
@@ -93,10 +97,13 @@ main (int argc, char* argv[])
         }
 
         if (icase_only != 0) {
+            double const start = amrex::second();
             auto const icase = run_icase_2001(
                 icase_n_cell, icase_steps, icase_dt,
                 icase_iteration_output != 0,
                 icase_write_plotfile != 0 ? icase_plotfile : std::string());
+            double wall_seconds = amrex::second() - start;
+            ParallelDescriptor::ReduceRealMax(wall_seconds);
             amrex::Print()
                 << "ICASE 2001-12 nonequilibrium radiation diffusion: "
                 << "cells/high-z cells=" << icase.cells << "/"
@@ -119,7 +126,8 @@ main (int argc, char* argv[])
                 << icase.maximum_energy_balance_error
                 << ", Newton-Krylov iterations total/max="
                 << icase.total_newton_krylov_iterations << "/"
-                << icase.maximum_newton_krylov_iterations << ", ";
+                << icase.maximum_newton_krylov_iterations
+                << ", whole-case wall=" << wall_seconds << " s, ";
             print_solver_summary(icase.solver);
             amrex::Print() << '\n';
             amrex::Finalize();
@@ -127,6 +135,12 @@ main (int argc, char* argv[])
         }
 
         if (front_only != 0) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                front_preconditioner.empty() ||
+                    front_preconditioner == "native" ||
+                    front_preconditioner == "mlmg" ||
+                    front_preconditioner == "boomeramg",
+                "front_preconditioner must be native, mlmg, or boomeramg");
             using Configuration =
                 std::pair<MLABecPreconditioner, MLABecAMGBackend>;
             Vector<Configuration> configurations{
@@ -140,6 +154,16 @@ main (int argc, char* argv[])
                 std::reverse(configurations.begin(), configurations.end());
             }
             for (auto const& [preconditioner, amg_backend] : configurations) {
+                std::string const selected =
+                    preconditioner == MLABecPreconditioner::MLMG
+                        ? "mlmg"
+                        : amg_backend == MLABecAMGBackend::Native
+                              ? "native"
+                              : "boomeramg";
+                if (!front_preconditioner.empty() &&
+                    front_preconditioner != selected) {
+                    continue;
+                }
                 double const start = amrex::second();
                 auto const front =
                     run_limited_front(preconditioner, amg_backend);
@@ -193,17 +217,23 @@ main (int argc, char* argv[])
             };
 
             if (cloud_case == "uniform") {
+                double const start = amrex::second();
                 auto const cloud_uniform = run_selected_cloud(false);
+                double wall_seconds = amrex::second() - start;
+                ParallelDescriptor::ReduceRealMax(wall_seconds);
                 amrex::Print()
                     << "FLD cloud Newton-Krylov benchmark: fine_n="
                     << cloud_fine_n
+                    << ", cells=" << cloud_uniform.cells
                     << ", limiter="
                     << (cloud_flux_limiter != 0 ? "on" : "off")
                     << ", uniform transmission/Newton/Krylov iterations="
                     << cloud_uniform.transmission << "/"
                     << cloud_uniform.nonlinear_iterations << "/"
                     << cloud_uniform.total_newton_krylov_iterations
-                    << std::endl;
+                    << ", whole-case wall=" << wall_seconds << " s, ";
+                print_solver_summary(cloud_uniform.solver);
+                amrex::Print() << std::endl;
                 amrex::Finalize();
                 return 0;
             }
@@ -249,6 +279,26 @@ main (int argc, char* argv[])
                 << cloud_amr.transmission << "/"
                 << cloud_amr.nonlinear_iterations << "/"
                 << cloud_amr.total_newton_krylov_iterations << std::endl;
+            amrex::Finalize();
+            return 0;
+        }
+
+        if (!gaussian_case.empty()) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                gaussian_case == "uniform" || gaussian_case == "amr",
+                "gaussian_case must be uniform or amr");
+            double const start = amrex::second();
+            auto const gaussian = run_gaussian(gaussian_case == "amr");
+            double wall_seconds = amrex::second() - start;
+            ParallelDescriptor::ReduceRealMax(wall_seconds);
+            amrex::Print()
+                << "FLD Gaussian " << gaussian_case
+                << ": cells=" << gaussian.cells
+                << ", relative L1 error=" << gaussian.relative_l1_error
+                << ", relative energy drift=" << gaussian.relative_energy_drift
+                << ", whole-case wall=" << wall_seconds << " s, ";
+            print_solver_summary(gaussian.solver);
+            amrex::Print() << '\n';
             amrex::Finalize();
             return 0;
         }
