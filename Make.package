@@ -1,10 +1,7 @@
-CEXE_sources += main.cpp
-CEXE_sources += Gaussian.cpp
+CEXE_sources += main3d.cpp
 CEXE_sources += Cloud.cpp
-CEXE_sources += LimitedFront.cpp
 CEXE_sources += Blockage.cpp
 CEXE_sources += DiffusionHierarchy.cpp
 CEXE_sources += FLDFieldOps.cpp
 CEXE_sources += CompositeGridTopology.cpp
 CEXE_sources += MLABecAMG.cpp
-CEXE_sources += MLABecAMGTest.cpp

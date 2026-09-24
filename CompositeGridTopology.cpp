@@ -63,8 +63,7 @@ CompositeGridTopology::CompositeGridTopology (
     : m_geom(std::move(geom)), m_grids(std::move(grids)),
       m_dmap(std::move(dmap))
 {
-    static_assert(AMREX_SPACEDIM == 2,
-                  "CompositeGridTopology currently implements 2-D faces");
+    static_assert(AMREX_SPACEDIM == 2 || AMREX_SPACEDIM == 3);
     validateHierarchy();
     buildRowsAndConnections();
     buildPattern();
@@ -220,6 +219,7 @@ CompositeGridTopology::buildRowsAndConnections ()
                         }
 
                         int fine_neighbor_count = 0;
+                        int expected_fine_neighbor_count = 0;
                         if (level + 1 < nlevels) {
                             auto const rr = m_ref_ratio[level];
                             auto const& fine_rows =
@@ -232,50 +232,52 @@ CompositeGridTopology::buildRowsAndConnections ()
                                 fine_volume / dxf[direction];
                             Real const distance = Real(0.5) *
                                 (dx[direction] + dxf[direction]);
-                            int const transverse = 1 - direction;
-                            for (int offset = 0; offset < rr[transverse];
-                                 ++offset) {
-                                IntVect fine_cell = IntVect::TheZeroVector();
-                                IntVect fine_face = IntVect::TheZeroVector();
-                                if (direction == 0) {
-                                    fine_cell[1] = iv[1] * rr[1] + offset;
-                                    fine_face[1] = fine_cell[1];
-                                    if (side < 0) {
-                                        fine_cell[0] = iv[0] * rr[0] - 1;
-                                        fine_face[0] = iv[0] * rr[0];
-                                    } else {
-                                        fine_cell[0] = (iv[0] + 1) * rr[0];
-                                        fine_face[0] = fine_cell[0];
+                            int const transverse_a =
+                                (direction + 1) % AMREX_SPACEDIM;
+                            int const transverse_b =
+                                (direction + 2) % AMREX_SPACEDIM;
+                            int const count_b = AMREX_SPACEDIM == 3
+                                                    ? rr[transverse_b] : 1;
+                            expected_fine_neighbor_count =
+                                rr[transverse_a] * count_b;
+                            for (int offset_a = 0;
+                                 offset_a < rr[transverse_a]; ++offset_a) {
+                                for (int offset_b = 0; offset_b < count_b;
+                                     ++offset_b) {
+                                    IntVect fine_cell = IntVect::TheZeroVector();
+                                    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                                        fine_cell[d] = iv[d] * rr[d];
                                     }
-                                } else {
-                                    fine_cell[0] = iv[0] * rr[0] + offset;
-                                    fine_face[0] = fine_cell[0];
-                                    if (side < 0) {
-                                        fine_cell[1] = iv[1] * rr[1] - 1;
-                                        fine_face[1] = iv[1] * rr[1];
-                                    } else {
-                                        fine_cell[1] = (iv[1] + 1) * rr[1];
-                                        fine_face[1] = fine_cell[1];
+                                    fine_cell[transverse_a] += offset_a;
+                                    if (AMREX_SPACEDIM == 3) {
+                                        fine_cell[transverse_b] += offset_b;
                                     }
-                                }
-                                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                                    fine_rows.box().contains(fine_cell),
-                                    "CompositeGridTopology fine-row metadata "
-                                    "does not contain a requested interface cell");
-                                Long const fine_row = fine_rows(fine_cell);
-                                if (fine_row >= 0) {
-                                    m_connections.push_back(Connection{
-                                        local_row, Long(-1), fine_row, level,
-                                        direction, fine_face,
-                                        fine_area / distance, true, true});
-                                    ++fine_neighbor_count;
+                                    fine_cell[direction] = side < 0
+                                        ? iv[direction] * rr[direction] - 1
+                                        : (iv[direction] + 1) * rr[direction];
+                                    IntVect fine_face = fine_cell;
+                                    if (side < 0) {
+                                        fine_face[direction] += 1;
+                                    }
+                                    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                                        fine_rows.box().contains(fine_cell),
+                                        "CompositeGridTopology fine-row metadata "
+                                        "does not contain a requested interface cell");
+                                    Long const fine_row = fine_rows(fine_cell);
+                                    if (fine_row >= 0) {
+                                        m_connections.push_back(Connection{
+                                            local_row, Long(-1), fine_row, level,
+                                            direction, fine_face,
+                                            fine_area / distance, true, true});
+                                        ++fine_neighbor_count;
+                                    }
                                 }
                             }
                         }
                         if (fine_neighbor_count > 0) {
                             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
                                 fine_neighbor_count ==
-                                    m_ref_ratio[level][1 - direction],
+                                    expected_fine_neighbor_count,
                                 "CompositeGridTopology found a partial "
                                 "coarse-face refinement");
                             continue;

@@ -16,7 +16,7 @@ Geometry
 make_geometry (int n_cell, Array<int, AMREX_SPACEDIM> const& is_periodic)
 {
     IntVect const lo(AMREX_D_DECL(0, 0, 0));
-    IntVect const hi(AMREX_D_DECL(n_cell - 1, n_cell - 1, 0));
+    IntVect const hi(AMREX_D_DECL(n_cell - 1, n_cell - 1, n_cell - 1));
     RealBox const physical_domain(
         {AMREX_D_DECL(Real(0), Real(0), Real(0))},
         {AMREX_D_DECL(Real(1), Real(1), Real(1))});
@@ -66,9 +66,11 @@ make_centered_patch_hierarchy (
     hierarchy.grids.push_back(
         split_grid(hierarchy.geom[0].Domain(), max_grid_size));
 
-    IntVect const coarse_lo(AMREX_D_DECL(n_cell / 4, n_cell / 4, 0));
+    IntVect const coarse_lo(AMREX_D_DECL(n_cell / 4, n_cell / 4,
+                                         n_cell / 4));
     IntVect const coarse_hi(
-        AMREX_D_DECL(3 * n_cell / 4 - 1, 3 * n_cell / 4 - 1, 0));
+        AMREX_D_DECL(3 * n_cell / 4 - 1, 3 * n_cell / 4 - 1,
+                     3 * n_cell / 4 - 1));
     Box const fine_patch = amrex::refine(Box(coarse_lo, coarse_hi),
                                          hierarchy.ref_ratio[0]);
     hierarchy.grids.push_back(split_grid(fine_patch, max_grid_size));
@@ -96,7 +98,8 @@ make_strip_hierarchy (
         AMREX_ALWAYS_ASSERT(ylo >= 0 && ylo < yhi && yhi <= n_cell);
         hierarchy.geom.push_back(make_geometry(n_cell, is_periodic));
         IntVect const lo(AMREX_D_DECL(0, ylo, 0));
-        IntVect const hi(AMREX_D_DECL(n_cell - 1, yhi - 1, 0));
+        IntVect const hi(AMREX_D_DECL(n_cell - 1, yhi - 1,
+                                      n_cell - 1));
         hierarchy.grids.push_back(split_grid(Box(lo, hi), max_grid_size));
         hierarchy.dmap.emplace_back(hierarchy.grids.back());
         if (level > 0) {

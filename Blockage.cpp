@@ -54,11 +54,14 @@ initialize_fields (DiffusionHierarchy const& hierarchy, LevelData& energy,
             {
                 Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0];
                 Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1];
-                Real const atomic =
-                    x > Real(1) / Real(3) && x < Real(2) / Real(3) &&
-                            y > Real(1) / Real(3) && y < Real(2) / Real(3)
-                        ? Real(10)
-                        : Real(1);
+                bool inside = x > Real(1) / Real(3) &&
+                              x < Real(2) / Real(3) &&
+                              y > Real(1) / Real(3) &&
+                              y < Real(2) / Real(3);
+                Real const z_coord = problo[2] + (Real(k) + Real(0.5)) * dx[2];
+                inside = inside && z_coord > Real(1) / Real(6) &&
+                         z_coord < Real(5) / Real(6);
+                Real const atomic = inside ? Real(10) : Real(1);
                 e(i, j, k) = initial_radiation_energy;
                 t(i, j, k) = initial_temperature;
                 z(i, j, k) = atomic;
@@ -105,8 +108,13 @@ update_absorption_and_cell_diffusion (
                                 (Real(ip - im) * dx[0]);
                 Real const gy = (e(i, jp, k) - e(i, jm, k)) /
                                 (Real(jp - jm) * dx[1]);
-                Real const limiter_term =
-                    std::sqrt(gx * gx + gy * gy) /
+                Real gradient_squared = gx * gx + gy * gy;
+                int const km = amrex::max(k - 1, dlo.z);
+                int const kp = amrex::min(k + 1, dhi.z);
+                Real const gz = (e(i, j, kp) - e(i, j, km)) /
+                                (Real(kp - km) * dx[2]);
+                gradient_squared += gz * gz;
+                Real const limiter_term = std::sqrt(gradient_squared) /
                     amrex::max(e(i, j, k), Real(1.e-30));
                 absorption(i, j, k) = sigma_value;
                 dr(i, j, k) = Real(1) /
@@ -147,33 +155,43 @@ fill_paper_face_coefficients (
                 {
                     int il = i;
                     int jl = j;
+                    int kl = k;
                     int ir = i;
                     int jr = j;
+                    int kr = k;
                     if (direction == 0) {
                         il = i - 1;
-                    } else {
+                    } else if (direction == 1) {
                         jl = j - 1;
+                    } else {
+                        kl = k - 1;
                     }
-                    bool const left_inside = il >= dlo.x && il <= dhi.x &&
-                                             jl >= dlo.y && jl <= dhi.y;
-                    bool const right_inside = ir >= dlo.x && ir <= dhi.x &&
-                                              jr >= dlo.y && jr <= dhi.y;
+                    bool left_inside = il >= dlo.x && il <= dhi.x &&
+                                       jl >= dlo.y && jl <= dhi.y;
+                    bool right_inside = ir >= dlo.x && ir <= dhi.x &&
+                                        jr >= dlo.y && jr <= dhi.y;
+                    left_inside = left_inside &&
+                                  kl >= dlo.z && kl <= dhi.z;
+                    right_inside = right_inside &&
+                                   kr >= dlo.z && kr <= dhi.z;
                     if (!left_inside) {
                         il = ir;
                         jl = jr;
+                        kl = kr;
                     }
                     if (!right_inside) {
                         ir = il;
                         jr = jl;
+                        kr = kl;
                     }
-                    Real const tl = positive_temperature(t(il,jl,k));
-                    Real const tr = positive_temperature(t(ir,jr,k));
+                    Real const tl = positive_temperature(t(il,jl,kl));
+                    Real const tr = positive_temperature(t(ir,jr,kr));
                     Real const face_temperature = Real(0.5) * (tl + tr);
                     Real const face_energy = amrex::max(
-                        Real(0.5) * (e(il,jl,k) + e(ir,jr,k)), Real(1.e-30));
+                        Real(0.5) * (e(il,jl,kl) + e(ir,jr,kr)), Real(1.e-30));
                     Real const gradient =
                         left_inside && right_inside
-                            ? std::abs(e(ir,jr,k) - e(il,jl,k)) /
+                            ? std::abs(e(ir,jr,kr) - e(il,jl,kl)) /
                                   dx[direction]
                             : Real(0);
                     Real const limiter_term = gradient / face_energy;
@@ -431,6 +449,8 @@ fill_coupled_residual (
         auto const dry = radiation_bcoef[0][1]->const_array(mfi);
         auto const dtx = material_bcoef[0][0]->const_array(mfi);
         auto const dty = material_bcoef[0][1]->const_array(mfi);
+        auto const drz = radiation_bcoef[0][2]->const_array(mfi);
+        auto const dtz = material_bcoef[0][2]->const_array(mfi);
         auto const re = residual.energy[0]->array(mfi);
         auto const rt = residual.temperature[0]->array(mfi);
         auto const active = mask.const_array(mfi);
@@ -481,6 +501,18 @@ fill_coupled_residual (
                              (dx[1] * dx[1]);
                 material += dty(i,j+1,k) * (t(i,j,k) - t(i,j+1,k)) /
                             (dx[1] * dx[1]);
+            }
+            if (k > dlo.z) {
+                radiation += drz(i,j,k) * (e(i,j,k) - e(i,j,k-1)) /
+                             (dx[2] * dx[2]);
+                material += dtz(i,j,k) * (t(i,j,k) - t(i,j,k-1)) /
+                            (dx[2] * dx[2]);
+            }
+            if (k < dhi.z) {
+                radiation += drz(i,j,k+1) * (e(i,j,k) - e(i,j,k+1)) /
+                             (dx[2] * dx[2]);
+                material += dtz(i,j,k+1) * (t(i,j,k) - t(i,j,k+1)) /
+                            (dx[2] * dx[2]);
             }
             re(i,j,k) = radiation;
             rt(i,j,k) = material;
@@ -766,7 +798,7 @@ radiation_boundary_input (DiffusionHierarchy const& hierarchy,
         int const inlet = domain.smallEnd(0);
         int const outlet = domain.bigEnd(0);
         auto const dx = hierarchy.geom[level].CellSizeArray();
-        Real const area = dx[1];
+        Real const area = dx[1] * dx[2];
         Real const distance = Real(0.5) * dx[0];
         for (MFIter mfi(*energy[level]); mfi.isValid(); ++mfi) {
             auto const e = energy[level]->const_array(mfi);
@@ -859,16 +891,17 @@ ICASE2001Result
 run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
                 std::string const& plotfile_name)
 {
+    static_assert(AMREX_SPACEDIM == 3);
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        n_cell > 0 && n_cell % 3 == 0,
-        "icase_n_cell must be positive and divisible by 3 so the material "
-        "interfaces align with cell faces");
+        n_cell > 0 && n_cell % 6 == 0,
+        "icase_n_cell must be positive and divisible by 6 so the "
+        "material interfaces align with cell faces");
     AMREX_ALWAYS_ASSERT(time_steps > 0 && dt > Real(0));
 
     Array<int, AMREX_SPACEDIM> const nonperiodic{
         AMREX_D_DECL(0, 0, 0)};
     DiffusionHierarchy hierarchy =
-        make_uniform_hierarchy(n_cell, 32, nonperiodic);
+        make_uniform_hierarchy(n_cell, 16, nonperiodic);
     auto masks = make_composite_masks(hierarchy);
     CoupledVector state = make_coupled_vector(hierarchy, 1);
     auto old_energy = make_cell_data(hierarchy, 1, 1);
@@ -1055,8 +1088,9 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
                          atomic_number, sigma, radiation_diffusion,
                          material_diffusion, result.final_time);
 
-    AMREX_ALWAYS_ASSERT(result.high_z_cells ==
-                        Long(n_cell / 3) * Long(n_cell / 3));
+    Long const expected_high_z_cells =
+        Long(n_cell / 3) * Long(n_cell / 3) * Long(2 * n_cell / 3);
+    AMREX_ALWAYS_ASSERT(result.high_z_cells == expected_high_z_cells);
     AMREX_ALWAYS_ASSERT(composite_all_finite(state.energy, masks));
     AMREX_ALWAYS_ASSERT(composite_all_finite(state.temperature, masks));
     AMREX_ALWAYS_ASSERT(result.minimum_radiation_energy > Real(0));

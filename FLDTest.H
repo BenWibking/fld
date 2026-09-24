@@ -36,19 +36,11 @@ struct SolverSummary
     }
 };
 
-struct GaussianResult
-{
-    amrex::Real relative_l1_error = amrex::Real(0);
-    amrex::Real relative_energy_drift = amrex::Real(0);
-    amrex::Long cells = 0;
-    SolverSummary solver;
-};
-
 struct CloudResult
 {
     amrex::Real transmission = amrex::Real(0);
     amrex::Real balance_error = amrex::Real(0);
-    amrex::Real cloudy_area_relative_error = amrex::Real(0);
+    amrex::Real cloudy_volume_relative_error = amrex::Real(0);
     amrex::Real minimum_energy = amrex::Real(0);
     amrex::Real maximum_energy = amrex::Real(0);
     amrex::Real final_nonlinear_change = amrex::Real(0);
@@ -57,22 +49,6 @@ struct CloudResult
     int total_newton_krylov_iterations = 0;
     int maximum_newton_krylov_iterations = 0;
     amrex::Long mixed_cells = 0;
-    amrex::Long cells = 0;
-    SolverSummary solver;
-};
-
-struct FrontResult
-{
-    amrex::Real front_radius = amrex::Real(0);
-    amrex::Real causal_radius = amrex::Real(0);
-    amrex::Real far_excess = amrex::Real(0);
-    amrex::Real maximum_flux_fraction = amrex::Real(0);
-    amrex::Real minimum_energy = amrex::Real(0);
-    amrex::Real maximum_energy = amrex::Real(0);
-    amrex::Real unlimited_far_excess = amrex::Real(0);
-    amrex::Real final_picard_change = amrex::Real(0);
-    int total_picard_iterations = 0;
-    int maximum_picard_iterations = 0;
     amrex::Long cells = 0;
     SolverSummary solver;
 };
@@ -99,21 +75,13 @@ struct ICASE2001Result
     SolverSummary solver;
 };
 
-GaussianResult run_gaussian (bool use_amr);
-
 CloudResult run_cloud (bool use_amr, int fine_n, bool limited,
                        bool iteration_output,
                        std::string const& plotfile_name);
 
-FrontResult run_limited_front (
-    MLABecPreconditioner preconditioner,
-    MLABecAMGBackend amg_backend = MLABecAMGBackend::Native);
-
 ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
                                 amrex::Real dt, bool iteration_output,
                                 std::string const& plotfile_name);
-
-void run_mlabeclap_amg_checks ();
 
 } // namespace fld_test
 

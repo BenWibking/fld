@@ -5,10 +5,14 @@ DEBUG        = FALSE
 USE_MPI      = TRUE
 USE_OMP      = FALSE
 COMP         = gnu
-DIM          = 2
+DIM          = 3
 PRECISION    = DOUBLE
 
 BL_NO_FORT = TRUE
+
+ifneq ($(DIM),3)
+$(error The FLD cloud and ICASE benchmarks require DIM=3)
+endif
 
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs
 

@@ -464,9 +464,34 @@ compute_diffusion (DiffusionHierarchy const& hierarchy, LevelData& energy,
                 }
                 Real const gx = (epx - emx) / (Real(2) * dx[0]);
                 Real const gy = (epy - emy) / (Real(2) * dx[1]);
+#if (AMREX_SPACEDIM == 3)
+                Real emz;
+                if (k > dlo.z || periodic[2]) {
+                    emz = e(i, j, k - 1);
+                } else if (lo_type[2] == LinOpBCType::Dirichlet ||
+                           lo_type[2] == LinOpBCType::Robin ||
+                           lo_type[2] == LinOpBCType::Marshak) {
+                    emz = Real(2) * lo_value[2] - e(i, j, k);
+                } else {
+                    emz = e(i, j, k);
+                }
+                Real epz;
+                if (k < dhi.z || periodic[2]) {
+                    epz = e(i, j, k + 1);
+                } else if (hi_type[2] == LinOpBCType::Dirichlet ||
+                           hi_type[2] == LinOpBCType::Robin ||
+                           hi_type[2] == LinOpBCType::Marshak) {
+                    epz = Real(2) * hi_value[2] - e(i, j, k);
+                } else {
+                    epz = e(i, j, k);
+                }
+                Real const gz = (epz - emz) / (Real(2) * dx[2]);
+#else
+                Real const gz = Real(0);
+#endif
                 Real const extinction_value = chi(i, j, k);
                 Real const energy_value = amrex::max(e(i, j, k), Real(1.e-30));
-                Real const r = std::sqrt(gx * gx + gy * gy) /
+                Real const r = std::sqrt(gx * gx + gy * gy + gz * gz) /
                                (extinction_value * energy_value);
                 Real const lambda = limited ? limiter(r) : Real(1) / Real(3);
                 d(i, j, k) = lambda / extinction_value;
@@ -517,34 +542,44 @@ fill_face_coefficients (DiffusionHierarchy const& hierarchy,
                 {
                     int il = i;
                     int jl = j;
+                    int kl = k;
                     int ir = i;
                     int jr = j;
+                    int kr = k;
                     if (direction == 0) {
                         il = i - 1;
-                    } else {
+                    } else if (direction == 1) {
                         jl = j - 1;
+                    } else {
+                        kl = k - 1;
                     }
-                    bool const left_inside = il >= dlo.x && il <= dhi.x &&
-                                             jl >= dlo.y && jl <= dhi.y;
-                    bool const right_inside = ir >= dlo.x && ir <= dhi.x &&
-                                              jr >= dlo.y && jr <= dhi.y;
+                    bool left_inside = il >= dlo.x && il <= dhi.x &&
+                                       jl >= dlo.y && jl <= dhi.y;
+                    bool right_inside = ir >= dlo.x && ir <= dhi.x &&
+                                        jr >= dlo.y && jr <= dhi.y;
+#if (AMREX_SPACEDIM == 3)
+                    left_inside = left_inside && kl >= dlo.z && kl <= dhi.z;
+                    right_inside = right_inside && kr >= dlo.z && kr <= dhi.z;
+#endif
                     if (!left_inside) {
                         il = ir;
                         jl = jr;
+                        kl = kr;
                     }
                     if (!right_inside) {
                         ir = il;
                         jr = jl;
+                        kr = kl;
                     }
-                    Real const dl = d(il, jl, k);
-                    Real const dr = d(ir, jr, k);
+                    Real const dl = d(il, jl, kl);
+                    Real const dr = d(ir, jr, kr);
                     if (!use_surface_opacity || !left_inside ||
                         !right_inside) {
                         b(i, j, k) = Real(2) * dl * dr / (dl + dr);
                         return;
                     }
-                    Real const chil = chi(il, jl, k);
-                    Real const chir = chi(ir, jr, k);
+                    Real const chil = chi(il, jl, kl);
+                    Real const chir = chi(ir, jr, kr);
                     Real const arithmetic = Real(0.5) * (chil + chir);
                     Real const harmonic = (chil + chir) > Real(0)
                                               ? Real(2) * chil * chir /

@@ -1,5 +1,6 @@
 #include "FLDTestCommon.H"
 #include "NewtonKrylovSolver.H"
+#include "PenroseCloudCenters.H"
 
 #include <AMReX_AsyncOut.H>
 #include <AMReX_MFIter.H>
@@ -128,23 +129,74 @@ cloud_radius ()
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
-cloud_volume_fraction (Real x, Real y, Real hx, Real hy)
+sphere_cell_fraction (Real x, Real y, Real z, Real hx, Real hy, Real hz,
+                      GpuArray<Real, penrose_cloud_count> const& centers_x,
+                      GpuArray<Real, penrose_cloud_count> const& centers_z)
 {
-    Real constexpr spacing = Real(1) / Real(8.5);
     Real const radius = cloud_radius();
     Real const xlo = x - Real(0.5) * hx;
     Real const xhi = x + Real(0.5) * hx;
     Real const ylo = y - Real(0.5) * hy;
     Real const yhi = y + Real(0.5) * hy;
-    Real cloudy_area = Real(0);
-    for (int cloud = 0; cloud <= 8; ++cloud) {
-        cloudy_area += circle_rectangle_intersection_area(
-            Real(cloud) * spacing, Real(0.5), radius, xlo, xhi, ylo, yhi);
+    Real const zlo = z - Real(0.5) * hz;
+    Real const zhi = z + Real(0.5) * hz;
+    Real const nearest_y = amrex::max(ylo, amrex::min(yhi, Real(0.5)));
+    Real const dy = nearest_y - Real(0.5);
+    GpuArray<Real, 4> const nodes{
+        Real(0.1834346424956498), Real(0.5255324099163290),
+        Real(0.7966664774136267), Real(0.9602898564975363)};
+    GpuArray<Real, 4> const weights{
+        Real(0.3626837833783620), Real(0.3137066458778873),
+        Real(0.2223810344533745), Real(0.1012285362903763)};
+    Real volume = Real(0);
+    for (int cloud = 0; cloud < penrose_cloud_count; ++cloud) {
+        Real const cx = centers_x[cloud];
+        Real const cz = centers_z[cloud];
+        Real const nearest_x = amrex::max(xlo, amrex::min(xhi, cx));
+        Real const nearest_z = amrex::max(zlo, amrex::min(zhi, cz));
+        Real const dx = nearest_x - cx;
+        Real const dz = nearest_z - cz;
+        if (dx * dx + dy * dy + dz * dz >= radius * radius) {
+            continue;
+        }
+        Real const far_x = amrex::max(std::abs(xlo - cx), std::abs(xhi - cx));
+        Real const far_y = amrex::max(std::abs(ylo - Real(0.5)),
+                                      std::abs(yhi - Real(0.5)));
+        Real const far_z = amrex::max(std::abs(zlo - cz), std::abs(zhi - cz));
+        if (far_x * far_x + far_y * far_y + far_z * far_z <=
+            radius * radius) {
+            return Real(1);
+        }
+        Real const a = amrex::max(zlo, cz - radius);
+        Real const b = amrex::min(zhi, cz + radius);
+        if (a >= b) {
+            continue;
+        }
+        // Integrate analytic circle/rectangle areas across four z panels.
+        for (int panel = 0; panel < 4; ++panel) {
+            Real const left = a + (b - a) * Real(panel) / Real(4);
+            Real const right = a + (b - a) * Real(panel + 1) / Real(4);
+            Real const center = Real(0.5) * (left + right);
+            Real const half = Real(0.5) * (right - left);
+            for (int point = 0; point < 4; ++point) {
+                for (int side = 0; side < 2; ++side) {
+                    Real const zz = center + (side == 0 ? -half : half) *
+                                                  nodes[point];
+                    Real const section_radius = std::sqrt(amrex::max(
+                        Real(0), radius * radius - (zz - cz) * (zz - cz)));
+                    if (section_radius > Real(0)) {
+                        volume += half * weights[point] *
+                            circle_rectangle_intersection_area(
+                                cx, Real(0.5), section_radius,
+                                xlo, xhi, ylo, yhi);
+                    }
+                }
+            }
+        }
     }
-    return amrex::max(
-        Real(0), amrex::min(Real(1), cloudy_area / (hx * hy)));
+    return amrex::max(Real(0),
+                      amrex::min(Real(1), volume / (hx * hy * hz)));
 }
-
 DiffusionHierarchy
 make_cloud_hierarchy (bool use_amr, int fine_n)
 {
@@ -152,11 +204,6 @@ make_cloud_hierarchy (bool use_amr, int fine_n)
         AMREX_D_DECL(0, 0, 0)};
     if (!use_amr) {
         return make_uniform_hierarchy(fine_n, 32, nonperiodic);
-    }
-    if (fine_n == 512) {
-        return make_strip_hierarchy(
-            {32, 128, 512}, {{0, 32}, {32, 96}, {192, 320}}, 32,
-            nonperiodic);
     }
     int const nbase = fine_n / 4;
     AMREX_ALWAYS_ASSERT(nbase > 1 && nbase % 8 == 0);
@@ -175,6 +222,12 @@ initialize_cloud_fields (DiffusionHierarchy const& hierarchy,
     // 1/(3*1000) inside the clouds to 1/(3*0.001) in the clear background.
     Real constexpr clear_extinction = Real(0.001);
     Real constexpr cloudy_extinction = Real(1000);
+    GpuArray<Real, penrose_cloud_count> centers_x{};
+    GpuArray<Real, penrose_cloud_count> centers_z{};
+    for (int cloud = 0; cloud < penrose_cloud_count; ++cloud) {
+        centers_x[cloud] = Real(penrose_cloud_centers_xz[cloud][0]);
+        centers_z[cloud] = Real(penrose_cloud_centers_xz[cloud][1]);
+    }
     for (int level = 0; level < static_cast<int>(state.size()); ++level) {
         auto const dx = hierarchy.geom[level].CellSizeArray();
         auto const problo = hierarchy.geom[level].ProbLoArray();
@@ -187,8 +240,9 @@ initialize_cloud_fields (DiffusionHierarchy const& hierarchy,
             {
                 Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0];
                 Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1];
-                Real const fraction =
-                    cloud_volume_fraction(x, y, dx[0], dx[1]);
+                Real const z = problo[2] + (Real(k) + Real(0.5)) * dx[2];
+                Real const fraction = sphere_cell_fraction(
+                    x, y, z, dx[0], dx[1], dx[2], centers_x, centers_z);
                 e(i, j, k) = Real(0.25) + Real(3.5) * y;
                 chi(i, j, k) = fraction * cloudy_extinction +
                                (Real(1) - fraction) * clear_extinction;
@@ -242,7 +296,7 @@ cloud_boundary_fluxes (DiffusionHierarchy const& hierarchy,
     for (int level = 0; level < static_cast<int>(energy.size()); ++level) {
         Box const domain = hierarchy.geom[level].Domain();
         auto const dx = hierarchy.geom[level].CellSizeArray();
-        Real const area = dx[0];
+        Real const area = dx[0] * dx[2];
         Real const distance = Real(0.5) * dx[1];
         for (MFIter mfi(*energy[level]); mfi.isValid(); ++mfi) {
             auto const e = energy[level]->const_array(mfi);
@@ -494,7 +548,7 @@ make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
                            LevelData& energy, LevelData& extinction,
                            LevelData& diffusion)
 {
-    static_assert(AMREX_SPACEDIM == 2);
+    static_assert(AMREX_SPACEDIM == 3);
     Real constexpr beta = Real(0.5);
     Real constexpr bottom_equilibrium = Real(0);
     Real constexpr top_equilibrium = Real(4);
@@ -524,28 +578,34 @@ make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
                 {
                     int il = i;
                     int jl = j;
+                    int kl = k;
                     int ir = i;
                     int jr = j;
+                    int kr = k;
                     if (direction == 0) {
                         il = i - 1;
-                    } else {
+                    } else if (direction == 1) {
                         jl = j - 1;
+                    } else {
+                        kl = k - 1;
                     }
-                    bool const left_inside = il >= dlo.x && il <= dhi.x &&
-                                             jl >= dlo.y && jl <= dhi.y;
-                    bool const right_inside = ir >= dlo.x && ir <= dhi.x &&
-                                              jr >= dlo.y && jr <= dhi.y;
+                    bool left_inside = il >= dlo.x && il <= dhi.x &&
+                                       jl >= dlo.y && jl <= dhi.y;
+                    bool right_inside = ir >= dlo.x && ir <= dhi.x &&
+                                        jr >= dlo.y && jr <= dhi.y;
+                    left_inside = left_inside && kl >= dlo.z && kl <= dhi.z;
+                    right_inside = right_inside && kr >= dlo.z && kr <= dhi.z;
                     if (left_inside && right_inside) {
                         f(i, j, k) =
                             -b(i, j, k) *
-                            (e(ir, jr, k) - e(il, jl, k)) / dx[direction];
+                            (e(ir, jr, kr) - e(il, jl, kl)) / dx[direction];
                         return;
                     }
 
-                    // The x boundaries are homogeneous Neumann.  At a y
+                    // The x and z boundaries are homogeneous Neumann. At a y
                     // boundary, reconstruct the Robin flux used by the
                     // linear system and orient it in the positive y direction.
-                    if (direction == 0) {
+                    if (direction != 1) {
                         f(i, j, k) = Real(0);
                         return;
                     }
@@ -569,6 +629,7 @@ make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
         for (MFIter mfi(*radiation_flux[level]); mfi.isValid(); ++mfi) {
             auto const fx = face_flux[level][0]->const_array(mfi);
             auto const fy = face_flux[level][1]->const_array(mfi);
+            auto const fz = face_flux[level][2]->const_array(mfi);
             auto const f = radiation_flux[level]->array(mfi);
             ParallelFor(mfi.validbox(),
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
@@ -577,6 +638,8 @@ make_cloud_radiation_flux (DiffusionHierarchy const& hierarchy,
                     Real(0.5) * (fx(i, j, k) + fx(i + 1, j, k));
                 f(i, j, k, 1) =
                     Real(0.5) * (fy(i, j, k) + fy(i, j + 1, k));
+                f(i, j, k, 2) =
+                    Real(0.5) * (fz(i, j, k) + fz(i, j, k + 1));
             });
         }
     }
@@ -597,7 +660,7 @@ write_cloud_plotfile (std::string const& name,
     average_down_hierarchy(cloud_fraction, hierarchy);
     auto radiation_flux = make_cloud_radiation_flux(
         hierarchy, state, extinction, diffusion);
-    auto plot = make_cell_data(hierarchy, 5 + AMREX_SPACEDIM, 0);
+    auto plot = make_cell_data(hierarchy, 8, 0);
     for (int level = 0; level < static_cast<int>(plot.size()); ++level) {
         MultiFab::Copy(*plot[level], *state[level], 0, 0, 1, 0);
         MultiFab::Copy(*plot[level], *extinction[level], 0, 1, 1, 0);
@@ -606,12 +669,12 @@ write_cloud_plotfile (std::string const& name,
         MultiFab::Copy(*plot[level], *diffusion[level], 0, 3, 1, 0);
         MultiFab::Multiply(*plot[level], *extinction[level], 0, 3, 1, 0);
         MultiFab::Copy(*plot[level], *radiation_flux[level], 0, 5,
-                       AMREX_SPACEDIM, 0);
+                       3, 0);
     }
     Vector<std::string> const variables{
         "radiation_energy", "extinction", "diffusion_coefficient",
         "flux_limiter", "cloud_volume_fraction", "radiation_flux_x",
-        "radiation_flux_y"};
+        "radiation_flux_y", "radiation_flux_z"};
     WriteMultiLevelPlotfile(
         name, static_cast<int>(plot.size()), get_level_const_ptrs(plot),
         variables, hierarchy.geom, Real(0), Vector<int>(plot.size(), 0),
@@ -652,6 +715,20 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
            std::string const& plotfile_name)
 {
     AMREX_ALWAYS_ASSERT(fine_n > 0 && fine_n % 4 == 0);
+    Real const radius = cloud_radius();
+    for (int first = 0; first < penrose_cloud_count; ++first) {
+        Real const x = Real(penrose_cloud_centers_xz[first][0]);
+        Real const z = Real(penrose_cloud_centers_xz[first][1]);
+        AMREX_ALWAYS_ASSERT(x >= radius && x <= Real(1) - radius &&
+                            z >= radius && z <= Real(1) - radius);
+        for (int second = first + 1; second < penrose_cloud_count;
+             ++second) {
+            Real const dx = x - Real(penrose_cloud_centers_xz[second][0]);
+            Real const dz = z - Real(penrose_cloud_centers_xz[second][1]);
+            AMREX_ALWAYS_ASSERT(dx * dx + dz * dz >
+                                Real(4) * radius * radius);
+        }
+    }
     DiffusionHierarchy hierarchy = make_cloud_hierarchy(use_amr, fine_n);
     auto masks = make_composite_masks(hierarchy);
     auto state = make_cell_data(hierarchy, 1, 1);
@@ -668,16 +745,18 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     result.cells = composite_cell_count(masks);
     result.mixed_cells = mixed_cloud_cells(cloud_fraction, masks);
     Real constexpr pi = Real(3.1415926535897932384626433832795);
-    Real const expected_cloudy_area =
-        Real(8.5) * pi * cloud_radius() * cloud_radius();
-    Real const cloudy_area =
+    Real const expected_cloudy_volume =
+        Real(penrose_cloud_count) * Real(4) / Real(3) * pi *
+        cloud_radius() * cloud_radius() * cloud_radius();
+    Real const cloudy_volume =
         composite_volume_sum(cloud_fraction, hierarchy, masks);
-    result.cloudy_area_relative_error =
-        std::abs(cloudy_area - expected_cloudy_area) / expected_cloudy_area;
-    Real const cloudy_area_tolerance =
-        (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-12);
-    AMREX_ALWAYS_ASSERT(result.cloudy_area_relative_error <
-                        cloudy_area_tolerance);
+    result.cloudy_volume_relative_error =
+        std::abs(cloudy_volume - expected_cloudy_volume) /
+        expected_cloudy_volume;
+    Real const cloudy_volume_tolerance =
+        (sizeof(Real) == sizeof(float)) ? Real(1.e-3) : Real(1.e-8);
+    AMREX_ALWAYS_ASSERT(result.cloudy_volume_relative_error <
+                        cloudy_volume_tolerance);
     AMREX_ALWAYS_ASSERT(result.mixed_cells > 0);
 
     PhysicalBoundaryData physical_boundary;
