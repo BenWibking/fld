@@ -54,6 +54,30 @@ struct MLABecAssemblyDiagnostics
     int setup_generation = 0;
 };
 
+// Common hierarchy controls and BoomerAMG-specific Chebyshev settings.
+struct MLABecAMGOptions
+{
+    amrex::Real strong_threshold = amrex::Real(0.25);
+    amrex::Real max_row_sum = amrex::Real(0.9);
+    int max_interp_elements = 4;
+    int max_levels = 25;
+    int max_coarse_size = 9;
+    int pre_sweeps = 1;
+    int post_sweeps = 1;
+    int chebyshev_order = 4;
+    // The remaining settings apply only to BoomerAMG.
+    int chebyshev_eigenvalue_iterations = 0;
+    amrex::Real chebyshev_fraction = amrex::Real(0.3);
+    int chebyshev_variant = 0;
+    bool chebyshev_scale = true;
+};
+
+struct MLABecAMGDiagnostics
+{
+    int levels = 0;
+    double operator_complexity = 0.0;
+};
+
 /**
  * Cell-centered, single-component, multilevel ABec solver using AMReX's
  * native `SpMatrix` and `GMRES_MV` algebra.  GMRES is always the outer
@@ -85,14 +109,14 @@ class MLABecLapAMG
         amrex::Vector<amrex::Geometry> geom,
         amrex::Vector<amrex::BoxArray> grids,
         amrex::Vector<amrex::DistributionMapping> dmap,
-        amrex::AMG<amrex::Real>::Options options = {},
+        MLABecAMGOptions options = {},
         std::string parmparse_prefix = "mlabeclap_amg");
 
     MLABecLapAMG (
         amrex::Vector<amrex::Geometry> geom,
         amrex::Vector<amrex::BoxArray> grids,
         amrex::Vector<amrex::DistributionMapping> dmap,
-        amrex::AMG<amrex::Real>::Options options,
+        MLABecAMGOptions options,
         MLABecPreconditioner preconditioner,
         MLABecAMGBackend amg_backend = MLABecAMGBackend::Native,
         std::string parmparse_prefix = "mlabeclap_amg");
@@ -151,7 +175,7 @@ class MLABecLapAMG
         amrex::Vector<amrex::MultiFab const*> const& input,
         amrex::Vector<amrex::MultiFab const*> const& rhs) const;
 
-    [[nodiscard]] amrex::AMG<amrex::Real>::Diagnostics const& diagnostics ()
+    [[nodiscard]] MLABecAMGDiagnostics const& diagnostics ()
         const noexcept;
 
     [[nodiscard]] MLABecAssemblyDiagnostics const& assembly_diagnostics ()

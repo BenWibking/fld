@@ -1,8 +1,10 @@
 #include "FLDTest.H"
 
 #include <AMReX.H>
+#include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -50,8 +52,10 @@ main (int argc, char* argv[])
         int cloud_fine_n = 128;
         int cloud_iteration_output = 1;
         int cloud_flux_limiter = 1;
+        int cloud_write_plotfile = 1;
         int cloud_only = 0;
         int front_only = 0;
+        int front_reverse = 0;
         int icase_only = 0;
         int icase_n_cell = 87;
         int icase_steps = 1000;
@@ -67,8 +71,10 @@ main (int argc, char* argv[])
             pp.query("cloud_fine_n", cloud_fine_n);
             pp.query("cloud_iteration_output", cloud_iteration_output);
             pp.query("cloud_flux_limiter", cloud_flux_limiter);
+            pp.query("cloud_write_plotfile", cloud_write_plotfile);
             pp.query("cloud_only", cloud_only);
             pp.query("front_only", front_only);
+            pp.query("front_reverse", front_reverse);
             pp.query("icase_only", icase_only);
             pp.query("icase_n_cell", icase_n_cell);
             pp.query("icase_steps", icase_steps);
@@ -130,9 +136,15 @@ main (int argc, char* argv[])
             configurations.emplace_back(MLABecPreconditioner::AMG,
                                         MLABecAMGBackend::BoomerAMG);
 #endif
+            if (front_reverse != 0) {
+                std::reverse(configurations.begin(), configurations.end());
+            }
             for (auto const& [preconditioner, amg_backend] : configurations) {
+                double const start = amrex::second();
                 auto const front =
                     run_limited_front(preconditioner, amg_backend);
+                double wall_seconds = amrex::second() - start;
+                ParallelDescriptor::ReduceRealMax(wall_seconds);
                 amrex::Print()
                     << "FLD limited-front preconditioner comparison: cells="
                     << front.cells << ", front/causal radius="
@@ -147,7 +159,8 @@ main (int argc, char* argv[])
                     << front.total_picard_iterations << "/"
                     << front.maximum_picard_iterations
                     << ", final nonlinear fixed-point residual="
-                    << front.final_picard_change << ", ";
+                    << front.final_picard_change
+                    << ", whole-case wall=" << wall_seconds << " s, ";
                 print_solver_summary(front.solver);
                 amrex::Print() << '\n';
             }
@@ -173,7 +186,7 @@ main (int argc, char* argv[])
                 return run_cloud(
                     use_amr, cloud_fine_n, cloud_flux_limiter != 0,
                     cloud_iteration_output != 0,
-                    cloud_plotfile_prefix.empty()
+                    cloud_write_plotfile == 0 || cloud_plotfile_prefix.empty()
                         ? std::string()
                         : cloud_plotfile_prefix +
                               (use_amr ? "_amr" : "_uniform"));
@@ -196,17 +209,26 @@ main (int argc, char* argv[])
             }
 
             if (cloud_case == "amr") {
+                double const start = amrex::second();
                 auto const cloud_amr = run_selected_cloud(true);
+                double wall_seconds = amrex::second() - start;
+                ParallelDescriptor::ReduceRealMax(wall_seconds);
                 amrex::Print()
                     << "FLD cloud Newton-Krylov benchmark: fine_n="
                     << cloud_fine_n
+                    << ", cells=" << cloud_amr.cells
                     << ", limiter="
                     << (cloud_flux_limiter != 0 ? "on" : "off")
                     << ", AMR transmission/Newton/Krylov iterations="
                     << cloud_amr.transmission << "/"
                     << cloud_amr.nonlinear_iterations << "/"
                     << cloud_amr.total_newton_krylov_iterations
-                    << std::endl;
+                    << ", balance error=" << cloud_amr.balance_error
+                    << ", final nonlinear residual="
+                    << cloud_amr.final_nonlinear_residual
+                    << ", whole-case wall=" << wall_seconds << " s, ";
+                print_solver_summary(cloud_amr.solver);
+                amrex::Print() << std::endl;
                 amrex::Finalize();
                 return 0;
             }

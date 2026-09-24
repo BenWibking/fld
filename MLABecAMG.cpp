@@ -11,7 +11,6 @@
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
-#include <AMReX_SpGEMM.H>
 #include <AMReX_SpMV.H>
 
 #ifdef AMREX_USE_HYPRE
@@ -150,7 +149,8 @@ class BoomerAMGPreconditioner
 {
   public:
     BoomerAMGPreconditioner (SpMatrix<Real> const& matrix,
-                             AMG<Real>::Options const& options,
+                             CompositeGridTopology::HostCSR const& rows,
+                             MLABecAMGOptions const& options,
                              int verbose)
         : partition(matrix.partition()), nlocal(matrix.numLocalRows()),
           row_ids(nlocal), rhs_values(nlocal), solution_values(nlocal)
@@ -165,8 +165,6 @@ class BoomerAMGPreconditioner
         auto const iupper = static_cast<HYPRE_BigInt>(end - 1);
         auto const comm = ParallelContext::CommunicatorSub();
 
-        auto rows = SpGEMMHelper<Real, DefaultAllocator>::
-            copy_local_global_csr(matrix);
         AMREX_ALWAYS_ASSERT(
             rows.nnz <= std::numeric_limits<HYPRE_Int>::max());
         Gpu::DeviceVector<Long> offsets(rows.row_offset.size());
@@ -366,7 +364,7 @@ class BoomerAMGPreconditioner
 struct MLABecLapAMG::Impl
 {
     Impl (Vector<Geometry> geom, Vector<BoxArray> grids,
-          Vector<DistributionMapping> dmap, AMG<Real>::Options a_options,
+          Vector<DistributionMapping> dmap, MLABecAMGOptions a_options,
           MLABecPreconditioner a_preconditioner,
           MLABecAMGBackend a_amg_backend, bool query_configuration,
           std::string prefix)
@@ -674,18 +672,36 @@ struct MLABecLapAMG::Impl
 #endif
         matrix.reset();
         matrix = std::make_unique<SpMatrix<Real>>(
-            topology.partition(), topology.partition(), std::move(device));
+            topology.partition(), std::move(device));
         if (!matrix_only) {
             if (selected_preconditioner == MLABecPreconditioner::AMG) {
                 if (selected_amg_backend == MLABecAMGBackend::Native) {
-                    options.symmetric = true;  // the ABec operator is symmetric
-                    amg = std::make_unique<AMG<Real>>(*matrix, options);
+                    amg = std::make_unique<AMG<Real>>(*matrix);
+                    amg->setStrongThreshold(options.strong_threshold);
+                    amg->setPMaxElmts(options.max_interp_elements);
+                    amg->setMaxLevels(options.max_levels);
+                    amg->setMaxCoarseSize(options.max_coarse_size);
+                    amg->setPreSmooth(options.pre_sweeps);
+                    amg->setPostSmooth(options.post_sweeps);
+                    amg->setChebyshevDegree(options.chebyshev_order);
+                    amg->setVerbose(verbose);
                     amg->setup();
+                    amg_diagnostics.levels = amg->numLevels();
+                    Long fine_nnz = 0;
+                    Long hierarchy_nnz = 0;
+                    for (int level = 0; level < amg->numLevels(); ++level) {
+                        Long level_nnz = amg->getMatrix(level).numLocalNonZeros();
+                        ParallelDescriptor::ReduceLongSum(level_nnz);
+                        if (level == 0) { fine_nnz = level_nnz; }
+                        hierarchy_nnz += level_nnz;
+                    }
+                    amg_diagnostics.operator_complexity = fine_nnz > 0
+                        ? double(hierarchy_nnz) / double(fine_nnz) : 0.0;
                 }
 #ifdef AMREX_USE_HYPRE
                 else {
                     boomeramg = std::make_unique<BoomerAMGPreconditioner>(
-                        *matrix, options, verbose);
+                        *matrix, numerical.matrix, options, verbose);
                 }
 #endif
             } else {
@@ -788,7 +804,7 @@ struct MLABecLapAMG::Impl
         ++current_preconditioner_applications;
         if (selected_preconditioner == MLABecPreconditioner::AMG) {
             if (selected_amg_backend == MLABecAMGBackend::Native) {
-                amg->apply(lhs, rhs);
+                amg->precond(lhs, rhs);
             }
 #ifdef AMREX_USE_HYPRE
             else {
@@ -1071,7 +1087,8 @@ struct MLABecLapAMG::Impl
     }
 
     CompositeGridTopology topology;
-    AMG<Real>::Options options;
+    MLABecAMGOptions options;
+    MLABecAMGDiagnostics amg_diagnostics;
     MLABecPreconditioner selected_preconditioner =
         MLABecPreconditioner::AMG;
     MLABecAMGBackend selected_amg_backend = MLABecAMGBackend::Native;
@@ -1104,7 +1121,7 @@ struct MLABecLapAMG::Impl
 
 MLABecLapAMG::MLABecLapAMG (
     Vector<Geometry> geom, Vector<BoxArray> grids,
-    Vector<DistributionMapping> dmap, AMG<Real>::Options options,
+    Vector<DistributionMapping> dmap, MLABecAMGOptions options,
     std::string parmparse_prefix)
     : m_impl(std::make_unique<Impl>(
           std::move(geom), std::move(grids), std::move(dmap),
@@ -1115,7 +1132,7 @@ MLABecLapAMG::MLABecLapAMG (
 
 MLABecLapAMG::MLABecLapAMG (
     Vector<Geometry> geom, Vector<BoxArray> grids,
-    Vector<DistributionMapping> dmap, AMG<Real>::Options options,
+    Vector<DistributionMapping> dmap, MLABecAMGOptions options,
     MLABecPreconditioner preconditioner, MLABecAMGBackend amg_backend,
     std::string parmparse_prefix)
     : m_impl(std::make_unique<Impl>(
@@ -1132,6 +1149,9 @@ MLABecLapAMG::setVerbose (int value)
     m_impl->verbose = value;
     if (m_impl->gmres) {
         m_impl->gmres->setVerbose(value);
+    }
+    if (m_impl->amg) {
+        m_impl->amg->setVerbose(value);
     }
     if (m_impl->mlmg) {
         m_impl->mlmg->setVerbose(value);
@@ -1203,14 +1223,14 @@ MLABecLapAMG::residual (Vector<MultiFab*> const& output,
     m_impl->residual(output, input, rhs);
 }
 
-AMG<Real>::Diagnostics const&
+MLABecAMGDiagnostics const&
 MLABecLapAMG::diagnostics () const noexcept
 {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_impl->amg != nullptr,
         "Native AMG hierarchy diagnostics require preconditioner=amg and "
         "amg_backend=native");
-    return m_impl->amg->diagnostics();
+    return m_impl->amg_diagnostics;
 }
 
 MLABecAssemblyDiagnostics const&

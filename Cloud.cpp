@@ -687,10 +687,7 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     physical_boundary.hi = physical_boundary.lo;
     physical_boundary.lo_value = {AMREX_D_DECL(Real(0), Real(0), Real(0))};
     physical_boundary.hi_value = {AMREX_D_DECL(Real(0), Real(4), Real(0))};
-    AMG<Real>::Options options;
-    options.priority_seed = 1;
-    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap,
-                        options);
+    MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
     Real const nonlinear_tolerance =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-6);
     Real constexpr incident_marshak_flux = Real(1);

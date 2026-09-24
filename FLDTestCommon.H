@@ -45,7 +45,7 @@ record_setup (SolverSummary& summary, MLABecLapAMG const& solver)
         auto const& diagnostics = solver.diagnostics();
         summary.maximum_levels = amrex::max(
             summary.maximum_levels,
-            static_cast<int>(diagnostics.levels.size()));
+            diagnostics.levels);
         summary.maximum_operator_complexity = amrex::max(
             summary.maximum_operator_complexity,
             diagnostics.operator_complexity);
