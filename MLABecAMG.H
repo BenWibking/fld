@@ -129,7 +129,6 @@ class MLABecLapAMG
     MLABecLapAMG& operator=(MLABecLapAMG&&) = delete;
 
     void setVerbose (int value);
-    void setLinearIterationOutput (bool value, std::string label);
     void setMaxIter (int value);
     void setMatrixOnly (bool value);
 

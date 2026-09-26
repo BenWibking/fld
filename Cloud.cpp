@@ -712,7 +712,6 @@ write_cloud_plotfile (std::string const& name,
 
 CloudResult
 run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
-           bool linear_iteration_output,
            std::string const& plotfile_name)
 {
     AMREX_ALWAYS_ASSERT(fine_n > 0 && fine_n % 4 == 0);
@@ -768,8 +767,6 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     physical_boundary.lo_value = {AMREX_D_DECL(Real(0), Real(0), Real(0))};
     physical_boundary.hi_value = {AMREX_D_DECL(Real(0), Real(4), Real(0))};
     MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
-    solver.setLinearIterationOutput(linear_iteration_output,
-                                    "FLD cloud diffusion");
     Real const nonlinear_tolerance =
         (sizeof(Real) == sizeof(float)) ? Real(2.e-4) : Real(2.e-6);
     Real constexpr incident_marshak_flux = Real(1);
@@ -788,7 +785,6 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     newton_options.krylov_restart_length = 100;
     newton_options.maximum_line_search_iterations = 24;
     newton_options.linear_verbosity = iteration_output ? 2 : 0;
-    newton_options.linear_iteration_output = linear_iteration_output;
     newton_options.centered_difference = false;
     newton_options.problem_name = "The cloud-layer FLD system";
     NewtonKrylovSolver<CloudNewtonProblem> newton(problem, newton_options);

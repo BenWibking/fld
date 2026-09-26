@@ -889,7 +889,6 @@ write_icase_plotfile (std::string const& name,
 
 ICASE2001Result
 run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
-                bool linear_iteration_output,
                 std::string const& plotfile_name)
 {
     static_assert(AMREX_SPACEDIM == 3);
@@ -942,10 +941,6 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
                                   hierarchy.dmap);
     MLABecLapAMG material_solver(hierarchy.geom, hierarchy.grids,
                                  hierarchy.dmap);
-    radiation_solver.setLinearIterationOutput(linear_iteration_output,
-                                              "ICASE radiation");
-    material_solver.setLinearIterationOutput(linear_iteration_output,
-                                             "ICASE material");
     Real const nonlinear_tolerance =
         sizeof(Real) == sizeof(float) ? Real(3.e-4) : Real(2.e-7);
     int constexpr maximum_nonlinear_iterations = 20;
@@ -1023,7 +1018,6 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
         options.maximum_nonlinear_iterations =
             maximum_nonlinear_iterations;
         options.problem_name = "The ICASE 2001-12 coupled system";
-        options.linear_iteration_output = linear_iteration_output;
         NewtonKrylovSolver<CoupledNewtonProblem> newton(problem, options);
         auto const solve = newton.solve(state);
         int const step_iterations = solve.nonlinear_iterations;

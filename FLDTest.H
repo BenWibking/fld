@@ -76,12 +76,11 @@ struct ICASE2001Result
 };
 
 CloudResult run_cloud (bool use_amr, int fine_n, bool limited,
-                       bool iteration_output, bool linear_iteration_output,
+                       bool iteration_output,
                        std::string const& plotfile_name);
 
 ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
                                 amrex::Real dt, bool iteration_output,
-                                bool linear_iteration_output,
                                 std::string const& plotfile_name);
 
 } // namespace fld_test

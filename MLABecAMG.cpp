@@ -403,23 +403,6 @@ struct MLABecLapAMG::Impl
         assembly.global_rows = topology.globalRows();
     }
 
-    void configure_iteration_callback ()
-    {
-        if (!gmres) { return; }
-        if (!linear_iteration_output) {
-            gmres->getGMRES().setIterationCallback({});
-            return;
-        }
-        gmres->getGMRES().setIterationCallback(
-            [label = linear_iteration_label]
-            (int iteration, Real residual, Real relative_residual) {
-                amrex::Print()
-                    << label << " GMRES iteration=" << iteration
-                    << ", estimated residual=" << residual
-                    << ", relative=" << relative_residual << std::endl;
-            });
-    }
-
     void validate_setup_inputs (
         Vector<MultiFab const*> const& acoef,
         Vector<Array<MultiFab const*, AMREX_SPACEDIM>> const& bcoef,
@@ -734,7 +717,6 @@ struct MLABecLapAMG::Impl
             gmres->getGMRES().setRestartLength(restart_length);
             gmres->getGMRES().setMaxIters(max_iter);
             gmres->setVerbose(verbose);
-            configure_iteration_callback();
         }
 
         assembly.coarse_fine_connections =
@@ -1113,8 +1095,6 @@ struct MLABecLapAMG::Impl
     MLABecAMGBackend selected_amg_backend = MLABecAMGBackend::Native;
     std::string parmparse_prefix;
     int verbose = 0;
-    bool linear_iteration_output = false;
-    std::string linear_iteration_label;
     int max_iter = 500;
     int restart_length = 50;
     bool matrix_only = false;
@@ -1182,14 +1162,6 @@ MLABecLapAMG::setVerbose (int value)
         m_impl->boomeramg->setVerbose(value);
     }
 #endif
-}
-
-void
-MLABecLapAMG::setLinearIterationOutput (bool value, std::string label)
-{
-    m_impl->linear_iteration_output = value;
-    m_impl->linear_iteration_label = std::move(label);
-    m_impl->configure_iteration_callback();
 }
 
 void

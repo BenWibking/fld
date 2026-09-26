@@ -23,7 +23,6 @@ struct NewtonKrylovOptions
     int krylov_restart_length = 30;
     int maximum_line_search_iterations = 14;
     int linear_verbosity = 0;
-    bool linear_iteration_output = false;
     bool centered_difference = true;
     std::string problem_name = "nonlinear system";
 };
@@ -87,21 +86,7 @@ template <typename Problem> class NewtonKrylovSolver
             gmres.define(linearized);
             gmres.setRestartLength(m_options.krylov_restart_length);
             gmres.setMaxIters(m_options.maximum_linear_iterations);
-            gmres.setVerbose(m_options.linear_iteration_output
-                                 ? 0 : m_options.linear_verbosity);
-            if (m_options.linear_iteration_output) {
-                gmres.setIterationCallback(
-                    [this, iteration] (int linear_iteration, RT residual_norm,
-                                       RT relative_residual) {
-                        amrex::Print()
-                            << m_options.problem_name
-                            << " Newton GMRES iteration=" << iteration + 1
-                            << ":" << linear_iteration
-                            << ", estimated residual=" << residual_norm
-                            << ", relative=" << relative_residual
-                            << std::endl;
-                    });
-            }
+            gmres.setVerbose(m_options.linear_verbosity);
 
             State correction = linearized.makeVecLHS();
             linearized.setToZero(correction);

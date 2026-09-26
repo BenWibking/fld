@@ -18,7 +18,6 @@ main (int argc, char* argv[])
     {
         int fine_n = 64;
         int iteration_output = 0;
-        int linear_iteration_output = 0;
         int flux_limiter = 1;
         int write_plotfile = 0;
         int icase_only = 0;
@@ -33,7 +32,6 @@ main (int argc, char* argv[])
         ParmParse pp;
         pp.query("cloud_fine_n", fine_n);
         pp.query("cloud_iteration_output", iteration_output);
-        pp.query("linear_iteration_output", linear_iteration_output);
         pp.query("cloud_flux_limiter", flux_limiter);
         pp.query("cloud_write_plotfile", write_plotfile);
         pp.query("cloud_case", cloud_case);
@@ -51,7 +49,6 @@ main (int argc, char* argv[])
             ICASE2001Result const result = run_icase_2001(
                 icase_n_cell, icase_steps, icase_dt,
                 icase_iteration_output != 0,
-                linear_iteration_output != 0,
                 icase_write_plotfile != 0 ? icase_plotfile : std::string());
             double wall_seconds = amrex::second() - start;
             ParallelDescriptor::ReduceRealMax(wall_seconds);
@@ -103,7 +100,7 @@ main (int argc, char* argv[])
             double const start = amrex::second();
             CloudResult const result = run_cloud(
                 use_amr, fine_n, flux_limiter != 0,
-                iteration_output != 0, linear_iteration_output != 0,
+                iteration_output != 0,
                 plotfile);
             double wall_seconds = amrex::second() - start;
             ParallelDescriptor::ReduceRealMax(wall_seconds);
