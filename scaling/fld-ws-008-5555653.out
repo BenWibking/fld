@@ -1,7 +1,7 @@
-Initializing AMReX (26.09-214-gfe5bcbff5c13)...
+Initializing AMReX (26.09-215-g34fcca894d99)...
 MPI initialized with 448 MPI processes
 MPI initialized with thread support level 0
-AMReX (26.09-214-gfe5bcbff5c13) initialized
+AMReX (26.09-215-g34fcca894d99) initialized
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=144134252 collective_rank_calls=448
 AMG setup messages level=0 phase=PMIS sends=66692 bytes=420798496 collective_rank_calls=4032
@@ -945,7 +945,7 @@ GMRES: iter = 2, residual = 3.480770064, 0.6228667812 (rel.)
 GMRES: iter = 3, residual = 3.190013332, 0.5708372858 (rel.)
 GMRES: iter = 4, residual = 2.991053305, 0.535234362 (rel.)
 GMRES: iter = 5, residual = 2.689347723, 0.4812456235 (rel.)
-GMRES: Solve Time = 1.648474454
+GMRES: Solve Time = 1.647152058
 The cloud-layer FLD system Newton 1: residual=4.17806109, GMRES rtol=0.503073858
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143825664 collective_rank_calls=448
@@ -1017,7 +1017,7 @@ GMRES: iter = 2, residual = 2.681526444, 0.6421871057 (rel.)
 GMRES: iter = 3, residual = 2.461421677, 0.5894751723 (rel.)
 GMRES: iter = 4, residual = 2.32033996, 0.5556881255 (rel.)
 GMRES: iter = 5, residual = 2.076488884, 0.497289292 (rel.)
-GMRES: Solve Time = 1.657539825
+GMRES: Solve Time = 1.665530733
 The cloud-layer FLD system Newton 2: residual=3.328435637, GMRES rtol=0.5718496114
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143809676 collective_rank_calls=448
@@ -1089,7 +1089,7 @@ GMRES: iter = 2, residual = 2.209096743, 0.6637129702 (rel.)
 GMRES: iter = 3, residual = 2.040961149, 0.6131974031 (rel.)
 GMRES: iter = 4, residual = 1.904609592, 0.572231204 (rel.)
 GMRES: iter = 5, residual = 1.692782656, 0.508588774 (rel.)
-GMRES: Solve Time = 1.64761323
+GMRES: Solve Time = 1.650046436
 The cloud-layer FLD system Newton 3: residual=2.706593139, GMRES rtol=0.5951406311
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143798980 collective_rank_calls=448
@@ -1160,7 +1160,7 @@ GMRES: iter = 1, residual = 2.14941, 0.7939569793 (rel.)
 GMRES: iter = 2, residual = 1.859099543, 0.6867210338 (rel.)
 GMRES: iter = 3, residual = 1.716307397, 0.633975945 (rel.)
 GMRES: iter = 4, residual = 1.578376016, 0.5830263438 (rel.)
-GMRES: Solve Time = 1.350913951
+GMRES: Solve Time = 1.35061051
 The cloud-layer FLD system Newton 4: residual=2.368939782, GMRES rtol=0.689137627
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143778176 collective_rank_calls=448
@@ -1229,7 +1229,7 @@ AMG setup messages level=7 phase=R*(A*P) sends=534 bytes=39264 collective_rank_c
 GMRES: iter = 0, residual = 2.369302578, 1 (rel.)
 GMRES: iter = 1, residual = 1.733441262, 0.7316251112 (rel.)
 GMRES: iter = 2, residual = 1.571469671, 0.6632625507 (rel.)
-GMRES: Solve Time = 0.756537435
+GMRES: Solve Time = 0.759908801
 The cloud-layer FLD system Newton 5: residual=1.690118453, GMRES rtol=0.4579686425
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143766500 collective_rank_calls=448
@@ -1302,7 +1302,7 @@ GMRES: iter = 3, residual = 1.222648166, 0.72317845 (rel.)
 GMRES: iter = 4, residual = 1.032546143, 0.610735893 (rel.)
 GMRES: iter = 5, residual = 0.8199542842, 0.4849909277 (rel.)
 GMRES: iter = 6, residual = 0.6749717883, 0.3992359087 (rel.)
-GMRES: Solve Time = 1.954696953
+GMRES: Solve Time = 1.963497968
 The cloud-layer FLD system Newton 6: residual=1.114471259, GMRES rtol=0.3910823406
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143783552 collective_rank_calls=448
@@ -1380,7 +1380,7 @@ GMRES: iter = 8, residual = 0.4760757321, 0.4236999003 (rel.)
 GMRES: iter = 9, residual = 0.4619695666, 0.4111456353 (rel.)
 GMRES: iter = 10, residual = 0.4469991953, 0.3978222407 (rel.)
 GMRES: iter = 11, residual = 0.4314162611, 0.3839536748 (rel.)
-GMRES: Solve Time = 3.485981229
+GMRES: Solve Time = 3.479541149
 The cloud-layer FLD system Newton 7: residual=0.6664075606, GMRES rtol=0.3165825526
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143808332 collective_rank_calls=448
@@ -1468,7 +1468,7 @@ GMRES: iter = 18, residual = 0.2911669905, 0.4328880379 (rel.)
 GMRES: iter = 19, residual = 0.2613799074, 0.388602551 (rel.)
 GMRES: iter = 20, residual = 0.2220408548, 0.3301158205 (rel.)
 GMRES: iter = 21, residual = 0.1802797682, 0.2680281683 (rel.)
-GMRES: Solve Time = 6.649518152
+GMRES: Solve Time = 6.643095173
 The cloud-layer FLD system Newton 8: residual=0.6598473274, GMRES rtol=0.8661564192
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143819980 collective_rank_calls=448
@@ -1536,7 +1536,7 @@ AMG setup messages level=7 phase=A*P sends=10458 bytes=316432 collective_rank_ca
 AMG setup messages level=7 phase=R*(A*P) sends=546 bytes=36864 collective_rank_calls=448
 GMRES: iter = 0, residual = 0.6621185181, 1 (rel.)
 GMRES: iter = 1, residual = 0.4697492051, 0.7094639286 (rel.)
-GMRES: Solve Time = 0.462656287
+GMRES: Solve Time = 0.459499461
 The cloud-layer FLD system Newton 9: residual=0.4701741997, GMRES rtol=0.6752042483
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143821940 collective_rank_calls=448
@@ -1611,7 +1611,7 @@ GMRES: iter = 5, residual = 0.3288292333, 0.6988838535 (rel.)
 GMRES: iter = 6, residual = 0.3229894689, 0.6864721922 (rel.)
 GMRES: iter = 7, residual = 0.319810563, 0.6797158403 (rel.)
 GMRES: iter = 8, residual = 0.3161902224, 0.6720212764 (rel.)
-GMRES: Solve Time = 2.571212116
+GMRES: Solve Time = 2.567979484
 The cloud-layer FLD system Newton 10: residual=0.3575556282, GMRES rtol=0.5197552931
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143836584 collective_rank_calls=448
@@ -1694,7 +1694,7 @@ GMRES: iter = 13, residual = 0.2291549541, 0.6386033244 (rel.)
 GMRES: iter = 14, residual = 0.2145470083, 0.5978942646 (rel.)
 GMRES: iter = 15, residual = 0.1968919599, 0.548693615 (rel.)
 GMRES: iter = 16, residual = 0.1763856351, 0.4915470992 (rel.)
-GMRES: Solve Time = 5.039240842
+GMRES: Solve Time = 5.055292727
 The cloud-layer FLD system Newton 11: residual=0.3430558078, GMRES rtol=0.822575766
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143846804 collective_rank_calls=448
@@ -1763,7 +1763,7 @@ AMG setup messages level=7 phase=R*(A*P) sends=336 bytes=18688 collective_rank_c
 GMRES: iter = 0, residual = 0.3437643677, 1 (rel.)
 GMRES: iter = 1, residual = 0.2946013557, 0.8569863064 (rel.)
 GMRES: iter = 2, residual = 0.2739100068, 0.7967958071 (rel.)
-GMRES: Solve Time = 0.753809251
+GMRES: Solve Time = 0.760987617
 The cloud-layer FLD system Newton 12: residual=0.2739705853, GMRES rtol=0.6089678017
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143853356 collective_rank_calls=448
@@ -1843,7 +1843,7 @@ GMRES: iter = 10, residual = 0.2101335116, 0.7659137969 (rel.)
 GMRES: iter = 11, residual = 0.1941354447, 0.707602583 (rel.)
 GMRES: iter = 12, residual = 0.1786516157, 0.6511657099 (rel.)
 GMRES: iter = 13, residual = 0.1637719635, 0.5969309961 (rel.)
-GMRES: Solve Time = 4.099590545
+GMRES: Solve Time = 4.106703272
 The cloud-layer FLD system Newton 13: residual=0.2577473989, GMRES rtol=0.7943286758
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143860272 collective_rank_calls=448
@@ -1919,7 +1919,7 @@ GMRES: iter = 6, residual = 0.2223845358, 0.8616415294 (rel.)
 GMRES: iter = 7, residual = 0.2181871546, 0.8453785372 (rel.)
 GMRES: iter = 8, residual = 0.2127208294, 0.8241989497 (rel.)
 GMRES: iter = 9, residual = 0.2046279398, 0.7928425888 (rel.)
-GMRES: Solve Time = 2.864067233
+GMRES: Solve Time = 2.869027882
 The cloud-layer FLD system Newton 14: residual=0.2370445359, GMRES rtol=0.7591830189
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143867244 collective_rank_calls=448
@@ -1996,7 +1996,7 @@ GMRES: iter = 7, residual = 0.2013831966, 0.8485126986 (rel.)
 GMRES: iter = 8, residual = 0.1969629256, 0.8298882246 (rel.)
 GMRES: iter = 9, residual = 0.1905702454, 0.8029531557 (rel.)
 GMRES: iter = 10, residual = 0.1794385207, 0.7560504848 (rel.)
-GMRES: Solve Time = 3.165164851
+GMRES: Solve Time = 3.174911279
 The cloud-layer FLD system Newton 15: residual=0.2277144722, GMRES rtol=0.8285028504
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143874328 collective_rank_calls=448
@@ -2069,7 +2069,7 @@ GMRES: iter = 3, residual = 0.193279355, 0.8476302323 (rel.)
 GMRES: iter = 4, residual = 0.1927800988, 0.845440735 (rel.)
 GMRES: iter = 5, residual = 0.1890942651, 0.8292764421 (rel.)
 GMRES: iter = 6, residual = 0.1835804472, 0.8050954906 (rel.)
-GMRES: Solve Time = 1.95474311
+GMRES: Solve Time = 1.960891378
 The cloud-layer FLD system Newton 16: residual=0.2074190418, GMRES rtol=0.74470059
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143882140 collective_rank_calls=448
@@ -2143,7 +2143,7 @@ GMRES: iter = 4, residual = 0.1802077213, 0.8676958165 (rel.)
 GMRES: iter = 5, residual = 0.1752889223, 0.8440119185 (rel.)
 GMRES: iter = 6, residual = 0.1637175012, 0.7882958059 (rel.)
 GMRES: iter = 7, residual = 0.1519038642, 0.7314134296 (rel.)
-GMRES: Solve Time = 2.259428581
+GMRES: Solve Time = 2.257114134
 The cloud-layer FLD system Newton 17: residual=0.1999862316, GMRES rtol=0.8345087989
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143888160 collective_rank_calls=448
@@ -2212,7 +2212,7 @@ AMG setup messages level=7 phase=R*(A*P) sends=564 bytes=41168 collective_rank_c
 GMRES: iter = 0, residual = 0.2002146048, 1 (rel.)
 GMRES: iter = 1, residual = 0.1753232839, 0.875676797 (rel.)
 GMRES: iter = 2, residual = 0.1661506951, 0.8298630122 (rel.)
-GMRES: Solve Time = 0.759229831
+GMRES: Solve Time = 0.758102784
 The cloud-layer FLD system Newton 18: residual=0.168175745, GMRES rtol=0.635005843
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143891800 collective_rank_calls=448
@@ -2285,7 +2285,7 @@ GMRES: iter = 3, residual = 0.1556759486, 0.9250643327 (rel.)
 GMRES: iter = 4, residual = 0.1434704714, 0.8525364202 (rel.)
 GMRES: iter = 5, residual = 0.1249915395, 0.7427301139 (rel.)
 GMRES: iter = 6, residual = 0.1058699447, 0.6291049495 (rel.)
-GMRES: Solve Time = 1.951557767
+GMRES: Solve Time = 1.952858913
 The cloud-layer FLD system Newton 19: residual=0.1681979916, GMRES rtol=0.899052291
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143896476 collective_rank_calls=448
@@ -2353,7 +2353,7 @@ AMG setup messages level=7 phase=A*P sends=10338 bytes=269168 collective_rank_ca
 AMG setup messages level=7 phase=R*(A*P) sends=486 bytes=28080 collective_rank_calls=448
 GMRES: iter = 0, residual = 0.1683665223, 1 (rel.)
 GMRES: iter = 1, residual = 0.1438207246, 0.854212124 (rel.)
-GMRES: Solve Time = 0.45881556
+GMRES: Solve Time = 0.461865918
 The cloud-layer FLD system Newton 20: residual=0.1435809575, GMRES rtol=0.7274655197
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143897344 collective_rank_calls=448
@@ -2424,7 +2424,7 @@ GMRES: iter = 1, residual = 0.1370337048, 0.9542394217 (rel.)
 GMRES: iter = 2, residual = 0.1302806478, 0.907214252 (rel.)
 GMRES: iter = 3, residual = 0.1187767869, 0.8271066786 (rel.)
 GMRES: iter = 4, residual = 0.103717391, 0.7222400021 (rel.)
-GMRES: Solve Time = 1.359696957
+GMRES: Solve Time = 1.364390089
 The cloud-layer FLD system Newton 21: residual=0.1322185776, GMRES rtol=0.7629347222
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143902356 collective_rank_calls=448
@@ -2493,7 +2493,7 @@ AMG setup messages level=7 phase=R*(A*P) sends=486 bytes=30976 collective_rank_c
 GMRES: iter = 0, residual = 0.1323406123, 1 (rel.)
 GMRES: iter = 1, residual = 0.1083997255, 0.8190964484 (rel.)
 GMRES: iter = 2, residual = 0.09404691841, 0.7106429143 (rel.)
-GMRES: Solve Time = 0.760400109
+GMRES: Solve Time = 0.759366056
 The cloud-layer FLD system Newton 22: residual=0.09625479584, GMRES rtol=0.5238624514
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143904148 collective_rank_calls=448
@@ -2566,7 +2566,7 @@ GMRES: iter = 3, residual = 0.07548585168, 0.7839971348 (rel.)
 GMRES: iter = 4, residual = 0.06618639681, 0.6874128635 (rel.)
 GMRES: iter = 5, residual = 0.05173916688, 0.5373637269 (rel.)
 GMRES: iter = 6, residual = 0.03459391849, 0.359292932 (rel.)
-GMRES: Solve Time = 1.955019918
+GMRES: Solve Time = 1.959221206
 The cloud-layer FLD system Newton 23: residual=0.07892644502, GMRES rtol=0.6047632961
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143906388 collective_rank_calls=448
@@ -2638,7 +2638,7 @@ GMRES: iter = 2, residual = 0.0641911, 0.8130658059 (rel.)
 GMRES: iter = 3, residual = 0.05705363116, 0.7226602534 (rel.)
 GMRES: iter = 4, residual = 0.049520229, 0.6272396781 (rel.)
 GMRES: iter = 5, residual = 0.03899474606, 0.4939204131 (rel.)
-GMRES: Solve Time = 1.644485386
+GMRES: Solve Time = 1.649581771
 The cloud-layer FLD system Newton 24: residual=0.06223976863, GMRES rtol=0.5593455744
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143907844 collective_rank_calls=448
@@ -2709,7 +2709,7 @@ GMRES: iter = 1, residual = 0.04779539274, 0.7676704557 (rel.)
 GMRES: iter = 2, residual = 0.04160487137, 0.6682407809 (rel.)
 GMRES: iter = 3, residual = 0.03649904914, 0.5862331092 (rel.)
 GMRES: iter = 4, residual = 0.03043984179, 0.4889125474 (rel.)
-GMRES: Solve Time = 1.353318211
+GMRES: Solve Time = 1.349077944
 The cloud-layer FLD system Newton 25: residual=0.05393079688, GMRES rtol=0.6752953649
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143909468 collective_rank_calls=448
@@ -2777,7 +2777,7 @@ AMG setup messages level=7 phase=A*P sends=7188 bytes=204864 collective_rank_cal
 AMG setup messages level=7 phase=R*(A*P) sends=459 bytes=26432 collective_rank_calls=448
 GMRES: iter = 0, residual = 0.0539474309, 1 (rel.)
 GMRES: iter = 1, residual = 0.02901335762, 0.5378079574 (rel.)
-GMRES: Solve Time = 0.463623267
+GMRES: Solve Time = 0.460771375
 The cloud-layer FLD system Newton 26: residual=0.02901801409, GMRES rtol=0.4104214469
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143909636 collective_rank_calls=448
@@ -2849,7 +2849,7 @@ GMRES: iter = 2, residual = 0.01902735735, 0.6556974422 (rel.)
 GMRES: iter = 3, residual = 0.01640263543, 0.5652474962 (rel.)
 GMRES: iter = 4, residual = 0.01471020022, 0.5069248706 (rel.)
 GMRES: iter = 5, residual = 0.01177420534, 0.4057482175 (rel.)
-GMRES: Solve Time = 1.646667414
+GMRES: Solve Time = 1.653401906
 The cloud-layer FLD system Newton 27: residual=0.01826962567, GMRES rtol=0.3567400242
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143910420 collective_rank_calls=448
@@ -2921,7 +2921,7 @@ GMRES: iter = 2, residual = 0.00882130298, 0.482782358 (rel.)
 GMRES: iter = 3, residual = 0.007694139201, 0.4210936497 (rel.)
 GMRES: iter = 4, residual = 0.006749712039, 0.3694059598 (rel.)
 GMRES: iter = 5, residual = 0.005676344925, 0.3106614969 (rel.)
-GMRES: Solve Time = 1.646971951
+GMRES: Solve Time = 1.64926272
 The cloud-layer FLD system Newton 28: residual=0.007024446256, GMRES rtol=0.1330160366
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143910980 collective_rank_calls=448
@@ -2998,7 +2998,7 @@ GMRES: iter = 7, residual = 0.002015374994, 0.2868941281 (rel.)
 GMRES: iter = 8, residual = 0.001565080002, 0.2227934076 (rel.)
 GMRES: iter = 9, residual = 0.00118402471, 0.1685491473 (rel.)
 GMRES: iter = 10, residual = 0.0009050011565, 0.1288293833 (rel.)
-GMRES: Solve Time = 3.156474256
+GMRES: Solve Time = 3.171746898
 The cloud-layer FLD system Newton 29: residual=0.00438488631, GMRES rtol=0.3506636688
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143911428 collective_rank_calls=448
@@ -3066,7 +3066,7 @@ AMG setup messages level=7 phase=A*P sends=8406 bytes=187088 collective_rank_cal
 AMG setup messages level=7 phase=R*(A*P) sends=513 bytes=24064 collective_rank_calls=448
 GMRES: iter = 0, residual = 0.00438506094, 1 (rel.)
 GMRES: iter = 1, residual = 0.001249970254, 0.2850519687 (rel.)
-GMRES: Solve Time = 0.463601735
+GMRES: Solve Time = 0.461522545
 The cloud-layer FLD system Newton 30: residual=0.001249021, GMRES rtol=0.1106685078
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143911428 collective_rank_calls=448
@@ -3144,7 +3144,7 @@ GMRES: iter = 8, residual = 0.0001903418214, 0.1523922893 (rel.)
 GMRES: iter = 9, residual = 0.0001663539115, 0.1331869855 (rel.)
 GMRES: iter = 10, residual = 0.0001493202021, 0.1195493836 (rel.)
 GMRES: iter = 11, residual = 0.0001334097741, 0.1068111082 (rel.)
-GMRES: Solve Time = 3.480608217
+GMRES: Solve Time = 3.48241602
 The cloud-layer FLD system Newton 31: residual=0.0001376071921, GMRES rtol=0.01092401582
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143911428 collective_rank_calls=448
@@ -3238,7 +3238,7 @@ GMRES: iter = 24, residual = 2.432884796e-06, 0.01767973426 (rel.)
 GMRES: iter = 25, residual = 2.010547259e-06, 0.01461061424 (rel.)
 GMRES: iter = 26, residual = 1.596911743e-06, 0.01160473167 (rel.)
 GMRES: iter = 27, residual = 1.28149648e-06, 0.009312614081 (rel.)
-GMRES: Solve Time = 8.595619288
+GMRES: Solve Time = 8.600772281
 The cloud-layer FLD system Newton 32: residual=1.501393267e-05, GMRES rtol=0.01071370822
 AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=448
 AMG setup messages level=0 phase=strength-transpose sends=3519 bytes=143911428 collective_rank_calls=448
@@ -3326,211 +3326,326 @@ GMRES: iter = 18, residual = 2.103116003e-07, 0.01400774812 (rel.)
 GMRES: iter = 19, residual = 1.940687618e-07, 0.01292589819 (rel.)
 GMRES: iter = 20, residual = 1.747256571e-07, 0.01163755585 (rel.)
 GMRES: iter = 21, residual = 1.546046288e-07, 0.01029740012 (rel.)
-GMRES: Solve Time = 6.633869189
+GMRES: Solve Time = 6.634936975
 FLD cloud AMR Newton-Krylov iterations=33/242, change=1.014463112e-07, residual=1.569829515e-07, transmission=0.7919410358
-FLD 3-D Penrose cloud: case=amr, fine_n=512, opacity contrast=100000, cells=35127296, limiter=on, mixed cells=1042988, cloudy volume relative error=0, transmission=0.7919410358, balance error=2.336820564e-10, Newton/Krylov iterations=33/242, nonlinear residual=1.569829515e-07, E range=[1.979834849,2.033018318], whole-case wall=184.197287 s, preconditioner=amg, AMG backend=native, linear iterations=442, max true relative residual=4.935963793e-10, aggregate setup=58.24769984 s, aggregate solve=33.15212585 s
+FLD 3-D Penrose cloud: case=amr, fine_n=512, opacity contrast=100000, cells=35127296, limiter=on, mixed cells=1042988, cloudy volume relative error=0, transmission=0.7919410358, balance error=2.336820564e-10, Newton/Krylov iterations=33/242, nonlinear residual=1.569829515e-07, E range=[1.979834849,2.033018318], whole-case wall=180.2383288 s, preconditioner=amg, AMG backend=native, linear iterations=442, max true relative residual=4.935963793e-10, aggregate setup=57.63629502 s, aggregate solve=33.15955675 s
 
 
-TinyProfiler total time across processes [min...avg...max]: 184.2 ... 184.2 ... 184.2
+TinyProfiler total time across processes [min...avg...max]: 180.2 ... 180.2 ... 180.2
 
 -------------------------------------------------------------------------------------------
 Name                                        NCalls  Excl. Min  Excl. Avg  Excl. Max   Max %
 -------------------------------------------------------------------------------------------
-SpMatrix::finishComm_mv                      47373      11.86      45.94      55.69  30.23%
-SpMV                                         47373      8.502      15.76       43.6  23.67%
-FabArray::ParallelCopy_finish()               7605      9.443       26.2      32.19  17.47%
-SpGEMM                                        1119      10.23      14.39      24.18  13.12%
-GMRES::GramSchmidt                             442      3.856      12.91      20.98  11.39%
-FabArray::setVal()                            8164     0.6393      2.693      17.25   9.37%
-AMG::setup                                      46     0.4955      9.699      13.23   7.18%
-SpMatrix::prepare_comm_mv                    51414      1.137      8.607      12.32   6.69%
-SpMatrix::define_split                        2611      2.596      5.606      11.21   6.09%
-FLD::composite_residual_without_assembly       308       1.92      3.644      10.37   5.63%
-ChebyshevSmoother                             8456      1.453      2.844      9.315   5.06%
-SpMatrix::startComm_tr                         746     0.5769       5.33      7.013   3.81%
-FillBoundary_finish()                         4832     0.3283      3.196      6.831   3.71%
-SpMatrix::startComm_mv                       47373     0.6748      1.862      5.893   3.20%
-FLD::NewtonKrylov::Jacobian_action             242     0.2553      1.231      4.336   2.35%
-FLD::NewtonKrylov::line_search                  33    0.05287      2.204       3.75   2.04%
-FabArray::ParallelCopy_nowait()               7605      0.232     0.6348      3.274   1.78%
-FLD::cloud_setup                                 1     0.3019      1.948      3.267   1.77%
-FLD::composite_topology                          1     0.1083      1.413      3.154   1.71%
-AMG::build_interp_mm                           373      1.343       1.71      2.979   1.62%
-FLD::composite_assembly                         46       0.62      1.347      2.804   1.52%
-FLD::MLABecLapAMG::precondition                275     0.7099      1.121      2.694   1.46%
-AMG::create_soc                                373      0.748      1.284      2.428   1.32%
-SpMatrix::preparePairHalo                      373     0.4885       1.51      1.835   1.00%
-SpMatrix::split_csr                          54221     0.1934     0.7176      1.717   0.93%
-SpMatrix::finishComm_tr                        746     0.2781     0.5728      1.588   0.86%
-AMG::pmis                                      373     0.9007      1.154      1.542   0.84%
-AMG::truncate_interp                           373     0.6526     0.8434      1.484   0.81%
-FabArray::Saxpy()                             8070     0.5805     0.7545      1.383   0.75%
-SpMatrix::gatherRemote                        3882     0.3898      1.062      1.372   0.75%
-amrex::Copy()                                 4562     0.4605     0.6202      1.173   0.64%
-SpMatrix::transpose                            746      0.425     0.6034      1.124   0.61%
-FLD::cloud_linearized_residual                 242      0.489      0.602      1.017   0.55%
-FLD::compute_diffusion                         355     0.4603     0.5895      1.004   0.55%
-FLD::MLABecLapAMG::residualWithoutAssembly     308     0.2102      0.323     0.8525   0.46%
-AMG::vcycle                                    488    0.07607     0.2228     0.8447   0.46%
-FLD::MLABecLapAMG::assemble                     46    0.09603      0.372     0.8135   0.44%
-GMRES::cycle()                                  46     0.1908     0.6363     0.7761   0.42%
-FLD::NewtonKrylov::solve                         1    0.06356     0.2463      0.698   0.38%
-FillBoundary_nowait()                         4832     0.1606     0.3514     0.6077   0.33%
-SpMatrix::gather_pair_plan                    3136     0.2692     0.3626     0.4346   0.24%
-FLD::MLABecLapAMG::solve                        13     0.1821     0.2383     0.3929   0.21%
-FLD::cloud_residual                             66     0.1325      0.164     0.2793   0.15%
-SpMatrix::trim_remote_rows                    2239     0.1029     0.1386      0.255   0.14%
-amrex::average_down                            677    0.05745    0.08279     0.2021   0.11%
-FLD::cloud_newton_prepare                       33     0.1114     0.1243     0.1738   0.09%
-FabArray::mult()                              1034    0.02429    0.03321       0.12   0.07%
-DistributionMapping::LeastUsedCPUs()             3  0.0005665     0.0159     0.1169   0.06%
-FabArray::LinComb()                            222    0.04587    0.06254     0.1146   0.06%
-GMRES:build_solution()                          46    0.02823    0.04596     0.1041   0.06%
-CellConservativeLinear::interp()               202          0    0.01443     0.1022   0.06%
-FLD::cloud_predictor                            13    0.03687    0.05158    0.07534   0.04%
-SpMatrix::gatherRemotePair                    3136   0.006131     0.0172    0.04869   0.03%
-FillPatchTwoLevels                            1418   0.007136    0.01011    0.02079   0.01%
-FabArray::ParallelCopy()                      7605   0.005576    0.00797    0.01921   0.01%
-GMRES::solve()                                  46    0.00412    0.00743    0.01577   0.01%
-FLD::run_cloud                                   1   0.003517   0.005553    0.01234   0.01%
-FLD::MLABecLapAMG::preconditioner_cycle        488   0.002172    0.00324   0.007869   0.00%
-FabArray::FillBoundary()                      4832   0.002636   0.003319     0.0043   0.00%
-amrex::average_down_w_geom                     677  0.0007196   0.001328   0.003611   0.00%
-FLD::cloud_precondition                        275    0.00107    0.00161   0.002772   0.00%
-FillPatchSingleLevel                          2836  0.0009583   0.001362   0.002191   0.00%
-FabArrayBase::TheFPinfo()                     1418  0.0005817  0.0008377    0.00175   0.00%
-FillPatchInterp(Fab)                          1418  0.0004806  0.0006913   0.001451   0.00%
-AMG::bottom_solve                              488  0.0002684   0.000406  0.0005737   0.00%
-FLD::NewtonKrylov::prepare                      33  4.997e-05  9.219e-05  0.0001666   0.00%
-FLD::NewtonKrylov::linear_solve                 33  4.253e-05  7.614e-05   0.000134   0.00%
-FPinfo::FPinfo()                                 1  2.938e-05  3.322e-05  5.077e-05   0.00%
-FLD::cloud_predictors                            1  7.174e-06  1.134e-05  1.952e-05   0.00%
-Other                                        17448    0.02426    0.04398      0.108   0.06%
+SpMatrix::finishComm_mv::recv_wait           33850      5.713      43.71      54.58  30.28%
+SpMV                                         47373      8.511      15.72      44.01  24.42%
+FabArray::ParallelCopy_finish()               7605      9.465      26.13      31.71  17.60%
+SpGEMM                                        1119      10.12      14.14       23.7  13.15%
+GMRES::GramSchmidt                             442       3.83      12.92      21.67  12.02%
+FabArray::setVal()                            8164     0.6508      2.682       17.1   9.48%
+AMG::setup                                      46     0.6142      9.673      13.28   7.37%
+SpMatrix::prepare_comm_mv                    51414      1.113      8.446      12.15   6.74%
+SpMatrix::define_split                        2611        2.6      5.596      11.09   6.15%
+FLD::composite_residual_without_assembly       308      1.878      3.618      10.57   5.86%
+ChebyshevSmoother                             8456      1.445      2.821       9.33   5.18%
+SpMatrix::startComm_tr                         746      0.588       5.29      6.947   3.85%
+FillBoundary_finish()                         4832     0.2327      3.185      6.918   3.84%
+SpMatrix::finishComm_mv::unpack              46413     0.6495      1.771       5.96   3.31%
+SpMatrix::startComm_mv                       47373     0.6666      1.853      5.882   3.26%
+SpMatrix::finishComm_mv::send_wait           33850    0.03701     0.4214      4.667   2.59%
+FLD::NewtonKrylov::Jacobian_action             242     0.2451       1.26      4.339   2.41%
+FLD::NewtonKrylov::line_search                  33    0.05291      2.203      4.019   2.23%
+FabArray::ParallelCopy_nowait()               7605     0.2305     0.6394       3.22   1.79%
+AMG::build_interp_mm                           373      1.309      1.683      2.977   1.65%
+FLD::composite_assembly                         46     0.6041      1.347      2.791   1.55%
+FLD::MLABecLapAMG::precondition                275     0.7156      1.115      2.632   1.46%
+AMG::create_soc                                373     0.7603      1.274      2.411   1.34%
+SpMatrix::preparePairHalo                      373      0.494      1.487      1.815   1.01%
+SpMatrix::split_csr                          54221     0.1876     0.7086      1.672   0.93%
+SpMatrix::finishComm_tr                        746     0.2412     0.5556      1.555   0.86%
+AMG::pmis                                      373     0.8792      1.122      1.515   0.84%
+AMG::truncate_interp                           373     0.6428     0.8206      1.447   0.80%
+FabArray::Saxpy()                             8070     0.5753     0.7485      1.399   0.78%
+SpMatrix::gatherRemote                        3882     0.3806      1.064      1.373   0.76%
+amrex::Copy()                                 4562     0.4573     0.6189      1.195   0.66%
+SpMatrix::transpose                            746     0.4053     0.6019      1.129   0.63%
+FLD::compute_diffusion                         355     0.4588     0.5867     0.9994   0.55%
+FLD::cloud_linearized_residual                 242       0.48     0.5875     0.9952   0.55%
+FLD::MLABecLapAMG::assemble                     46    0.09619     0.3679     0.8392   0.47%
+FLD::MLABecLapAMG::residualWithoutAssembly     308     0.2123     0.3247     0.8385   0.47%
+GMRES::cycle()                                  46     0.1911     0.6493     0.7923   0.44%
+FLD::NewtonKrylov::solve                         1    0.06221     0.2472      0.693   0.38%
+FillBoundary_nowait()                         4832     0.1263     0.3154     0.6194   0.34%
+AMG::vcycle                                    488    0.03935     0.1315     0.4593   0.25%
+SpMatrix::gather_pair_plan                    3136     0.2651     0.3606      0.433   0.24%
+FLD::MLABecLapAMG::solve                        13     0.1751     0.2373     0.3774   0.21%
+AMG::vcycle::level=0 residual                  488    0.02092    0.07486     0.3482   0.19%
+FLD::cloud_residual                             66     0.1306     0.1603     0.2735   0.15%
+SpMatrix::trim_remote_rows                    2239     0.1099     0.1474     0.2707   0.15%
+FLD::composite_topology                          1    0.05928     0.1234      0.255   0.14%
+amrex::average_down                            677    0.05602    0.08142     0.2074   0.12%
+SpMatrix::finishComm_mv                      47373    0.04217    0.06695      0.207   0.11%
+FLD::cloud_newton_prepare                       33     0.1026     0.1154     0.1658   0.09%
+FabArray::mult()                              1034    0.02361    0.03318     0.1218   0.07%
+FabArray::LinComb()                            222    0.04508    0.06187     0.1128   0.06%
+GMRES:build_solution()                          46    0.02797    0.04623     0.1042   0.06%
+CellConservativeLinear::interp()               202          0    0.01437     0.1018   0.06%
+DistributionMapping::LeastUsedCPUs()             3  0.0006237    0.01212    0.09701   0.05%
+SpMatrix::finishComm_mv::cleanup             46413    0.02909    0.04371    0.09607   0.05%
+FLD::cloud_predictor                            13    0.03689    0.05073    0.07302   0.04%
+AMG::vcycle::level=1 residual                  488   0.006002    0.01432    0.06568   0.04%
+SpMatrix::gatherRemotePair                    3136   0.006017    0.01729    0.05049   0.03%
+FLD::cloud_field_initialization                  1   0.009426    0.01591    0.03449   0.02%
+FLD::cloud_setup                                 1   0.008147    0.02729    0.03338   0.02%
+FabArray::ParallelCopy()                      7605   0.005806   0.008607     0.0219   0.01%
+FabArrayBase::getCPC()                        5809   0.004802   0.007891    0.02111   0.01%
+FillPatchTwoLevels                            1418   0.006886   0.009868    0.02009   0.01%
+GMRES::solve()                                  46   0.003839     0.0073     0.0168   0.01%
+FLD::run_cloud                                   1   0.003461   0.005445    0.01254   0.01%
+FLD::MLABecLapAMG::preconditioner_cycle        488   0.002322   0.003346   0.008447   0.00%
+AMG::vcycle::level=2 residual                  488   0.001036    0.00184   0.007789   0.00%
+AMG::vcycle::level=0 prolong                   488  0.0008416   0.001656   0.004948   0.00%
+AMG::vcycle::level=0 pre_smooth                488   0.001179   0.002092   0.004653   0.00%
+FabArray::FillBoundary()                      4832   0.002655   0.003405   0.004391   0.00%
+AMG::vcycle::level=1 post_smooth               488  0.0006824    0.00198   0.004145   0.00%
+AMG::vcycle::level=0 post_smooth               488  0.0009582   0.002009   0.004103   0.00%
+AMG::vcycle::level=1 pre_smooth                488  0.0007879   0.001834   0.003878   0.00%
+AMG::vcycle::level=1 restrict                  488  0.0004346  0.0008152   0.003519   0.00%
+amrex::average_down_w_geom                     677   0.000664   0.001265    0.00341   0.00%
+AMG::vcycle::level=0 restrict                  488   0.000558   0.001218   0.003137   0.00%
+AMG::vcycle::level=2 pre_smooth                488   0.000511  0.0008973   0.003024   0.00%
+AMG::vcycle::level=1 prolong                   488  0.0003294  0.0008337   0.002981   0.00%
+FLD::cloud_precondition                        275   0.001098   0.001642   0.002883   0.00%
+FillPatchSingleLevel                          2836  0.0008999   0.001366   0.002247   0.00%
+FabArrayBase::TheFPinfo()                     1418  0.0006064  0.0008358   0.001701   0.00%
+FillPatchInterp(Fab)                          1418    0.00043  0.0006686   0.001471   0.00%
+AMG::vcycle::level=2 post_smooth               488  0.0002541  0.0005812   0.001463   0.00%
+AMG::vcycle::level=2 restrict                  488  0.0001971  0.0003863   0.001249   0.00%
+AMG::vcycle::level=4 pre_smooth                488  0.0002514  0.0005779  0.0008994   0.00%
+AMG::vcycle::level=3 residual                  488  0.0003527  0.0004908  0.0007947   0.00%
+AMG::vcycle::level=3 pre_smooth                488  0.0002983  0.0004211  0.0007436   0.00%
+AMG::bottom_solve                              488  0.0003304  0.0004249  0.0005947   0.00%
+AMG::vcycle::level=3 restrict                  488  0.0001391  0.0002213  0.0005624   0.00%
+AMG::vcycle::level=2 prolong                   488  0.0001963  0.0002981  0.0005122   0.00%
+AMG::vcycle::level=5 residual                  488  0.0001916  0.0003153  0.0004702   0.00%
+AMG::vcycle::level=4 residual                  488  0.0002067  0.0002749   0.000454   0.00%
+AMG::vcycle::level=6 residual                  488  0.0001366  0.0002211  0.0004222   0.00%
+AMG::vcycle::level=5 pre_smooth                488  0.0001952  0.0002512  0.0004202   0.00%
+AMG::vcycle::level=3 post_smooth               488  0.0001717  0.0002354  0.0003405   0.00%
+AMG::vcycle::level=6 pre_smooth                488  0.0001817  0.0002303  0.0003066   0.00%
+AMG::vcycle::level=8 bottom_solve              408  0.0001727  0.0002171  0.0002917   0.00%
+AMG::vcycle::level=7 pre_smooth                488  0.0001723   0.000202  0.0002539   0.00%
+AMG::vcycle::level=7 residual                  488  0.0001133  0.0001802  0.0002511   0.00%
+AMG::vcycle::level=3 prolong                   488  0.0001572  0.0001954  0.0002509   0.00%
+AMG::vcycle::level=4 prolong                   488  0.0001531  0.0001979  0.0002501   0.00%
+AMG::vcycle::level=5 post_smooth               488   0.000148  0.0001827  0.0002345   0.00%
+AMG::vcycle::level=4 restrict                  488  0.0001143   0.000158  0.0002321   0.00%
+AMG::vcycle::level=4 post_smooth               488  0.0001558  0.0001855  0.0002234   0.00%
+AMG::vcycle::level=5 prolong                   488  0.0001192  0.0001542  0.0002055   0.00%
+FLD::NewtonKrylov::prepare                      33  5.492e-05  9.995e-05  0.0001961   0.00%
+AMG::vcycle::level=5 restrict                  488  0.0001128  0.0001372  0.0001944   0.00%
+AMG::vcycle::level=6 post_smooth               488  0.0001196   0.000147  0.0001878   0.00%
+AMG::vcycle::level=7 post_smooth               488  0.0001225  0.0001448  0.0001648   0.00%
+AMG::vcycle::level=6 prolong                   488   0.000111  0.0001291  0.0001598   0.00%
+FLD::NewtonKrylov::linear_solve                 33  5.646e-05   9.29e-05  0.0001524   0.00%
+AMG::vcycle::level=7 prolong                   488  0.0001057  0.0001243  0.0001467   0.00%
+FPinfo::FPinfo()                                 1  2.996e-05  3.394e-05   5.98e-05   0.00%
+FLD::cloud_predictors                            1  6.906e-06  1.161e-05  2.277e-05   0.00%
+Other                                        13094   0.009439    0.01978    0.05009   0.03%
 -------------------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------------------
 Name                                        NCalls  Incl. Min  Incl. Avg  Incl. Max   Max %
 -------------------------------------------------------------------------------------------
-FLD::run_cloud                                   1      184.2      184.2      184.2 100.00%
-FLD::NewtonKrylov::solve                         1      130.3      130.3      130.3  70.71%
-GMRES::solve()                                  46      111.2      111.7      111.9  60.73%
-GMRES::cycle()                                  46      111.1      111.6      111.8  60.72%
-FLD::NewtonKrylov::linear_solve                 33      78.12      78.54      78.69  42.72%
-FLD::MLABecLapAMG::preconditioner_cycle        488      60.14      65.64      68.68  37.28%
-AMG::vcycle                                    488      60.13      65.63      68.67  37.28%
-SpMV                                         47373      59.04      63.82      66.83  36.28%
-FLD::MLABecLapAMG::assemble                     46      58.25      58.36       58.4  31.70%
-ChebyshevSmoother                             8456      41.33      49.58      56.69  30.78%
-SpMatrix::finishComm_mv                      47373      11.86      45.94      55.69  30.23%
-AMG::setup                                      46      51.19      53.35      55.14  29.93%
-FLD::cloud_predictors                            1      50.11      50.27      50.51  27.42%
-FLD::cloud_predictor                            13      50.11      50.27      50.51  27.42%
-FLD::cloud_precondition                        275      37.66      41.17      42.29  22.96%
-FLD::NewtonKrylov::prepare                      33      42.23      42.25      42.26  22.94%
-FLD::cloud_newton_prepare                       33      42.23      42.25      42.26  22.94%
-FLD::MLABecLapAMG::precondition                275       37.6       41.1      42.23  22.93%
-FLD::MLABecLapAMG::residualWithoutAssembly     308       21.6      29.05      38.41  20.85%
-FLD::composite_residual_without_assembly       308      21.18      28.49      37.88  20.56%
-FLD::NewtonKrylov::Jacobian_action             242      20.69      26.93      33.95  18.43%
-FLD::MLABecLapAMG::solve                        13      33.44      33.47      33.48  18.18%
-FLD::cloud_linearized_residual                 242      19.66      25.46      33.25  18.05%
-FabArray::ParallelCopy()                      7605      12.23       27.1      32.73  17.77%
-SpGEMM                                        1119      23.42       26.4      32.69  17.75%
-FabArray::ParallelCopy_finish()               7605      9.443       26.2      32.19  17.47%
-GMRES::GramSchmidt                             442      4.825      13.52      21.53  11.69%
-FabArray::setVal()                            8164     0.6393      2.693      17.25   9.37%
-SpMatrix::prepare_comm_mv                    51414      1.137      8.607      12.32   6.69%
-SpMatrix::define_split                        2611      2.689      5.729      11.42   6.20%
-AMG::build_interp_mm                           373      6.907      7.935      10.26   5.57%
-FLD::NewtonKrylov::line_search                  33      9.012      9.034       9.04   4.91%
-FLD::cloud_residual                             66      5.334      6.891      9.015   4.89%
-SpMatrix::transpose                            746      2.544      6.506      7.869   4.27%
-FabArray::FillBoundary()                      4832      0.744      3.553      7.063   3.83%
-GMRES:build_solution()                          46       6.27        6.8      7.038   3.82%
-SpMatrix::startComm_tr                         746      0.577       5.33      7.013   3.81%
-FillBoundary_finish()                         4832     0.3283      3.196      6.831   3.71%
-SpMatrix::startComm_mv                       47373     0.8602      2.091      6.048   3.28%
-FLD::composite_assembly                         46      2.787      4.401      5.947   3.23%
-amrex::average_down_w_geom                     677    0.07323     0.3084      4.245   2.30%
-amrex::average_down                            677    0.07244     0.3071      4.244   2.30%
-AMG::create_soc                                373      1.531      2.279      4.063   2.21%
-AMG::pmis                                      373      2.561      3.633      3.969   2.15%
-FLD::cloud_setup                                 1      3.418      3.651      3.809   2.07%
-FabArray::ParallelCopy_nowait()               7605     0.4692     0.8924      3.699   2.01%
-FLD::composite_topology                          1     0.3652      1.676      3.461   1.88%
-FLD::compute_diffusion                         355      1.529       1.71      1.971   1.07%
-SpMatrix::preparePairHalo                      373     0.4885       1.51      1.835   1.00%
-AMG::truncate_interp                           373     0.7621      1.027      1.797   0.98%
-SpMatrix::split_csr                          54221     0.2013     0.7325       1.75   0.95%
-SpMatrix::finishComm_tr                        746     0.2781     0.5728      1.588   0.86%
-FillPatchTwoLevels                            1418     0.4646     0.8351      1.409   0.76%
-FabArray::Saxpy()                             8070     0.5805     0.7545      1.383   0.75%
-SpMatrix::gatherRemote                        3882     0.3907      1.063      1.374   0.75%
-FillPatchSingleLevel                          2836     0.1168     0.3585      1.186   0.64%
-amrex::Copy()                                 4562     0.4605     0.6202      1.173   0.64%
-FillBoundary_nowait()                         4832     0.1625     0.3537     0.6103   0.33%
-SpMatrix::gatherRemotePair                    3136     0.2783     0.3798     0.4643   0.25%
-SpMatrix::gather_pair_plan                    3136     0.2692     0.3626     0.4346   0.24%
-SpMatrix::trim_remote_rows                    2239     0.1029     0.1386      0.255   0.14%
-FabArray::mult()                              1034    0.02429    0.03321       0.12   0.07%
-FabArrayBase::TheFPinfo()                     1418  0.0008423    0.01596     0.1172   0.06%
-DistributionMapping::LeastUsedCPUs()             3  0.0005665     0.0159     0.1169   0.06%
-FPinfo::FPinfo()                                 1   0.000156    0.01512     0.1164   0.06%
-FabArray::LinComb()                            222    0.04587    0.06254     0.1146   0.06%
-AMG::bottom_solve                              488    0.02673    0.05515     0.1144   0.06%
-FillPatchInterp(Fab)                          1418  0.0004806    0.01512     0.1036   0.06%
-CellConservativeLinear::interp()               202          0    0.01443     0.1022   0.06%
-Other                                        17448     0.0435    0.07148      0.146   0.08%
+FLD::run_cloud                                   1      180.2      180.2      180.2 100.00%
+FLD::NewtonKrylov::solve                         1      129.9      129.9      129.9  72.06%
+GMRES::solve()                                  46      111.3      111.8        112  62.11%
+GMRES::cycle()                                  46      111.2      111.7      111.9  62.10%
+FLD::NewtonKrylov::linear_solve                 33      78.21      78.63      78.78  43.71%
+FLD::MLABecLapAMG::preconditioner_cycle        488      60.16      65.67      68.89  38.22%
+AMG::vcycle                                    488      60.15      65.66      68.88  38.22%
+SpMV                                         47373      59.18      63.84      66.97  37.15%
+FLD::MLABecLapAMG::assemble                     46      57.63      57.73      57.78  32.05%
+ChebyshevSmoother                             8456      41.41      49.66      56.79  31.51%
+SpMatrix::finishComm_mv                      47373      11.52      46.01      55.76  30.94%
+SpMatrix::finishComm_mv::recv_wait           33850      5.713      43.71      54.58  30.28%
+AMG::setup                                      46       50.6      52.73      54.52  30.25%
+FLD::cloud_predictors                            1      49.95      50.08      50.16  27.83%
+FLD::cloud_predictor                            13      49.95      50.08      50.16  27.83%
+FLD::cloud_precondition                        275      37.76      41.24      42.39  23.52%
+FLD::MLABecLapAMG::precondition                275       37.7      41.16      42.33  23.49%
+FLD::NewtonKrylov::prepare                      33      41.76      41.78       41.8  23.19%
+FLD::cloud_newton_prepare                       33      41.76      41.78       41.8  23.19%
+FLD::MLABecLapAMG::residualWithoutAssembly     308      20.92      29.08      38.49  21.36%
+FLD::composite_residual_without_assembly       308      20.56      28.51         38  21.08%
+FLD::NewtonKrylov::Jacobian_action             242      20.43      26.95      34.01  18.87%
+FLD::MLABecLapAMG::solve                        13      33.44      33.47      33.48  18.57%
+FLD::cloud_linearized_residual                 242      18.98      25.46      33.27  18.46%
+FabArray::ParallelCopy()                      7605      12.19      27.03      32.24  17.89%
+SpGEMM                                        1119      23.18      25.98      32.02  17.77%
+FabArray::ParallelCopy_finish()               7605      9.465      26.13      31.71  17.60%
+GMRES::GramSchmidt                             442      4.825      13.53       22.2  12.32%
+FabArray::setVal()                            8164     0.6508      2.682       17.1   9.48%
+AMG::vcycle::level=0 post_smooth               488      8.865      12.35      14.74   8.18%
+AMG::vcycle::level=0 pre_smooth                488       6.64      10.34       12.8   7.10%
+SpMatrix::prepare_comm_mv                    51414      1.114      8.447      12.15   6.74%
+AMG::vcycle::level=1 post_smooth               488      7.217      9.437      11.71   6.50%
+SpMatrix::define_split                        2611      2.701      5.728      11.31   6.27%
+AMG::vcycle::level=1 pre_smooth                488      7.815      8.992      11.18   6.20%
+AMG::build_interp_mm                           373       6.85      7.875      10.16   5.64%
+FLD::NewtonKrylov::line_search                  33      9.014      9.035      9.043   5.02%
+FLD::cloud_residual                             66      5.065      6.895      9.021   5.01%
+SpMatrix::transpose                            746      2.545      6.448       7.79   4.32%
+FabArray::FillBoundary()                      4832     0.5074      3.506      7.158   3.97%
+GMRES:build_solution()                          46      6.291      6.812      7.057   3.92%
+SpMatrix::startComm_tr                         746     0.5882      5.291      6.947   3.85%
+FillBoundary_finish()                         4832     0.2327      3.185      6.918   3.84%
+AMG::vcycle::level=0 restrict                  488      0.231      2.352      6.058   3.36%
+SpMatrix::startComm_mv                       47373      0.836      2.081      6.039   3.35%
+FLD::composite_assembly                         46      2.792      4.406      6.014   3.34%
+SpMatrix::finishComm_mv::unpack              46413     0.6495      1.771       5.96   3.31%
+AMG::vcycle::level=2 pre_smooth                488      2.227      3.022      5.362   2.98%
+SpMatrix::finishComm_mv::send_wait           33850    0.03701     0.4214      4.667   2.59%
+amrex::average_down_w_geom                     677    0.07247     0.3062      4.181   2.32%
+amrex::average_down                            677    0.07174      0.305       4.18   2.32%
+AMG::create_soc                                373      1.549      2.273      4.065   2.26%
+AMG::pmis                                      373      2.531      3.572      3.926   2.18%
+FabArray::ParallelCopy_nowait()               7605     0.4661     0.8974      3.638   2.02%
+AMG::vcycle::level=0 residual                  488      1.772      3.099      3.476   1.93%
+AMG::vcycle::level=1 residual                  488      2.009      2.656        2.9   1.61%
+AMG::vcycle::level=0 prolong                   488      1.345       2.29      2.831   1.57%
+AMG::vcycle::level=1 restrict                  488     0.4172      2.003      2.591   1.44%
+AMG::vcycle::level=2 post_smooth               488      1.799      2.097      2.496   1.38%
+SpMatrix::preparePairHalo                      373      0.494      1.487      1.815   1.01%
+AMG::vcycle::level=5 prolong                   488    0.05039     0.5414      1.793   0.99%
+FLD::compute_diffusion                         355      1.518      1.674      1.782   0.99%
+AMG::truncate_interp                           373     0.7646      1.007      1.762   0.98%
+SpMatrix::split_csr                          54221      0.197     0.7241      1.703   0.94%
+SpMatrix::finishComm_tr                        746     0.2412     0.5556      1.555   0.86%
+FillPatchTwoLevels                            1418     0.4721     0.8291      1.408   0.78%
+FabArray::Saxpy()                             8070     0.5753     0.7485      1.399   0.78%
+SpMatrix::gatherRemote                        3882     0.3816      1.065      1.374   0.76%
+AMG::vcycle::level=3 pre_smooth                488     0.3329     0.5733      1.212   0.67%
+amrex::Copy()                                 4562     0.4573     0.6189      1.195   0.66%
+FillPatchSingleLevel                          2836     0.1187     0.3561      1.191   0.66%
+AMG::vcycle::level=4 prolong                   488    0.02758     0.1264     0.8955   0.50%
+AMG::vcycle::level=2 residual                  488     0.4346      0.725     0.8804   0.49%
+AMG::vcycle::level=2 restrict                  488     0.1328      0.466     0.7393   0.41%
+AMG::vcycle::level=6 prolong                   488    0.04506     0.3931     0.7109   0.39%
+FillBoundary_nowait()                         4832     0.1282     0.3176     0.6219   0.35%
+AMG::vcycle::level=6 post_smooth               488    0.04657     0.4334     0.6001   0.33%
+AMG::vcycle::level=1 prolong                   488     0.2452     0.4503     0.5903   0.33%
+AMG::vcycle::level=5 post_smooth               488     0.3654     0.4865     0.5314   0.29%
+AMG::vcycle::level=6 pre_smooth                488    0.03933     0.3583      0.498   0.28%
+SpMatrix::gatherRemotePair                    3136     0.2771     0.3779     0.4655   0.26%
+SpMatrix::gather_pair_plan                    3136     0.2651     0.3606      0.433   0.24%
+AMG::vcycle::level=5 pre_smooth                488     0.2823     0.3809     0.4233   0.23%
+AMG::vcycle::level=3 post_smooth               488     0.3031     0.3471     0.3981   0.22%
+FLD::cloud_setup                                 1     0.1829     0.2691     0.3934   0.22%
+FLD::composite_topology                          1     0.1304     0.2159      0.342   0.19%
+AMG::vcycle::level=4 post_smooth               488     0.2744     0.3013     0.3325   0.18%
+AMG::vcycle::level=4 pre_smooth                488     0.2253     0.2537     0.2875   0.16%
+SpMatrix::trim_remote_rows                    2239     0.1099     0.1474     0.2707   0.15%
+AMG::vcycle::level=7 pre_smooth                488   0.002412     0.1192     0.2663   0.15%
+AMG::vcycle::level=7 post_smooth               488   0.002644     0.1136     0.2622   0.15%
+AMG::vcycle::level=6 residual                  488    0.01155     0.1152     0.1548   0.09%
+AMG::vcycle::level=5 residual                  488    0.09846     0.1308     0.1362   0.08%
+FabArray::mult()                              1034    0.02361    0.03318     0.1218   0.07%
+AMG::vcycle::level=2 prolong                   488    0.04026    0.09018     0.1162   0.06%
+AMG::bottom_solve                              488    0.02803    0.05649     0.1148   0.06%
+FabArray::LinComb()                            222    0.04508    0.06187     0.1128   0.06%
+AMG::vcycle::level=3 residual                  488    0.08603    0.09506     0.1126   0.06%
+AMG::vcycle::level=8 bottom_solve              408    0.02673    0.05418     0.1105   0.06%
+AMG::vcycle::level=7 prolong                   488   0.001037     0.0416     0.1056   0.06%
+FillPatchInterp(Fab)                          1418    0.00043    0.01504     0.1031   0.06%
+CellConservativeLinear::interp()               202          0    0.01437     0.1018   0.06%
+DistributionMapping::LeastUsedCPUs()             3  0.0006237    0.01212    0.09701   0.05%
+FabArrayBase::TheFPinfo()                     1418  0.0009663    0.01218     0.0966   0.05%
+SpMatrix::finishComm_mv::cleanup             46413    0.02909    0.04371    0.09607   0.05%
+FPinfo::FPinfo()                                 1  0.0001425    0.01134    0.09585   0.05%
+AMG::vcycle::level=3 restrict                  488    0.03328    0.06601    0.08994   0.05%
+AMG::vcycle::level=4 residual                  488    0.07298    0.07829    0.08048   0.04%
+AMG::vcycle::level=3 prolong                   488    0.02769    0.05397    0.06994   0.04%
+AMG::vcycle::level=7 residual                  488  0.0007422    0.02988     0.0683   0.04%
+AMG::vcycle::level=4 restrict                  488    0.01204    0.03827    0.06393   0.04%
+AMG::vcycle::level=5 restrict                  488   0.002876    0.01528    0.05487   0.03%
+FabArrayBase::getCPC()                        5809    0.01003    0.02047    0.04568   0.03%
+FLD::cloud_field_initialization                  1    0.01751    0.02346    0.04117   0.02%
+Other                                        13094    0.01922    0.04035     0.1425   0.08%
 -------------------------------------------------------------------------------------------
 
 Async Memory Usage:
 ---------------------------------------------------------------------------------------------------
 Name                 Nalloc  AvgMem min  AvgMem avg  AvgMem max  MaxMem min  MaxMem avg  MaxMem max
 ---------------------------------------------------------------------------------------------------
-amrex::average_down  693248       2   B      18   B     282   B    8192   B    9362   B      12 KiB
+amrex::average_down  693248       2   B      18   B     283   B    8192   B    9362   B      12 KiB
 ---------------------------------------------------------------------------------------------------
 
 Pinned Memory Usage:
 ------------------------------------------------------------------------------------------------------------------------
 Name                                      Nalloc  AvgMem min  AvgMem avg  AvgMem max  MaxMem min  MaxMem avg  MaxMem max
 ------------------------------------------------------------------------------------------------------------------------
-FLD::composite_residual_without_assembly    2368     453 KiB    7286 KiB      46 MiB     641 KiB      10 MiB      66 MiB
-FLD::composite_assembly                     8832       0   B     144 KiB    1110 KiB       0   B    7076 KiB      48 MiB
-FLD::composite_topology                     3264    1616   B       9 KiB      55 KiB    1120 KiB    3810 KiB      18 MiB
-The_Pinned_Arena::Initialize()               448       0   B       0   B       2   B    8192 KiB    8192 KiB    8192 KiB
-FLD::MLABecLapAMG::assemble               350336    1149 KiB    1393 KiB    2290 KiB    3632 KiB    4410 KiB    7264 KiB
-SpGEMM                                    396981    4092   B      17 KiB      85 KiB     416 KiB     964 KiB    2948 KiB
-FLD::MLABecLapAMG::precondition           598400     208 KiB     277 KiB     466 KiB    1024 KiB    1243 KiB    2048 KiB
-FLD::MLABecLapAMG::solve                   28288     185 KiB     225 KiB     372 KiB    1024 KiB    1243 KiB    2048 KiB
-SpMatrix::finishComm_tr                   955192     175   B     920   B    4957   B     177 KiB     372 KiB     835 KiB
-SpMatrix::startComm_tr                    862599    3763   B    6043   B    8252   B     170 KiB     316 KiB     571 KiB
+FLD::composite_residual_without_assembly    2368     462 KiB    7424 KiB      47 MiB     641 KiB      10 MiB      66 MiB
+FLD::composite_assembly                     8832       0   B     148 KiB    1152 KiB       0   B    7076 KiB      48 MiB
+FLD::composite_topology                     3264     625   B    3545   B      21 KiB    1120 KiB    3810 KiB      18 MiB
+The_Pinned_Arena::Initialize()               448       0   B       0   B       1   B    8192 KiB    8192 KiB    8192 KiB
+FLD::MLABecLapAMG::assemble               350336    1161 KiB    1409 KiB    2316 KiB    3632 KiB    4410 KiB    7264 KiB
+SpGEMM                                    396981    4163   B      18 KiB      87 KiB     416 KiB     964 KiB    2948 KiB
+FLD::MLABecLapAMG::precondition           598400     213 KiB     283 KiB     477 KiB    1024 KiB    1243 KiB    2048 KiB
+FLD::MLABecLapAMG::solve                   28288     189 KiB     230 KiB     380 KiB    1024 KiB    1243 KiB    2048 KiB
+SpMatrix::finishComm_tr                   955192     151   B     914   B    4968   B     177 KiB     372 KiB     835 KiB
+SpMatrix::startComm_tr                    862599    3871   B    6134   B    8399   B     170 KiB     316 KiB     571 KiB
 ------------------------------------------------------------------------------------------------------------------------
 
 Cpu Memory Usage:
 --------------------------------------------------------------------------------------------------------------------
 Name                                  Nalloc  AvgMem min  AvgMem avg  AvgMem max  MaxMem min  MaxMem avg  MaxMem max
 --------------------------------------------------------------------------------------------------------------------
-GMRES::cycle()                        227392    1284 KiB    1569 KiB    2589 KiB      13 MiB      15 MiB      26 MiB
-FLD::cloud_setup                       22848      10 MiB      12 MiB      21 MiB      10 MiB      13 MiB      21 MiB
-FabArray::ParallelCopy_nowait()      2171737      38 KiB     121 KiB     967 KiB     528 KiB    1225 KiB    9399 KiB
-SpGEMM                               1224663    8642   B      26 KiB     105 KiB    1505 KiB    2832 KiB    6059 KiB
-FLD::NewtonKrylov::solve              109888    1291 KiB    1568 KiB    2583 KiB    2765 KiB    3357 KiB    5530 KiB
-GMRES::solve()                        143616     911 KiB    1113 KiB    1836 KiB    2150 KiB    2611 KiB    4301 KiB
-FLD::NewtonKrylov::Jacobian_action    263296      66 KiB     106 KiB     224 KiB     614 KiB     746 KiB    1229 KiB
-FLD::cloud_linearized_residual        263296    8343   B      10 KiB      20 KiB     614 KiB     746 KiB    1229 KiB
-FLD::cloud_newton_prepare              35904    1036   B    1434   B    2820   B     614 KiB     746 KiB    1229 KiB
-FLD::cloud_predictor                   28288     112 KiB     136 KiB     226 KiB     614 KiB     746 KiB    1229 KiB
-FLD::cloud_residual                    71808    2062   B    2841   B    5652   B     614 KiB     746 KiB    1229 KiB
-FillBoundary_nowait()                3018496     638   B    3215   B    7859   B     176 KiB     371 KiB     546 KiB
-SpMatrix::gather_pair_plan           2684374      49   B     116   B     283   B      97 KiB     191 KiB     432 KiB
-SpMatrix::startComm_mv              30330338      25 KiB      48 KiB     109 KiB      97 KiB     191 KiB     432 KiB
-SpMatrix::gatherRemote               3164999     149   B     390   B     550   B      81 KiB     172 KiB     317 KiB
+GMRES::cycle()                        227392    1313 KiB    1604 KiB    2647 KiB      13 MiB      15 MiB      26 MiB
+FLD::cloud_setup                       22848      10 MiB      13 MiB      21 MiB      10 MiB      13 MiB      21 MiB
+FabArray::ParallelCopy_nowait()      2171737      38 KiB     124 KiB     992 KiB     528 KiB    1225 KiB    9399 KiB
+SpGEMM                               1224663    8796   B      27 KiB     108 KiB    1505 KiB    2832 KiB    6059 KiB
+FLD::NewtonKrylov::solve              109888    1318 KiB    1600 KiB    2637 KiB    2765 KiB    3357 KiB    5530 KiB
+GMRES::solve()                        143616     933 KiB    1139 KiB    1879 KiB    2150 KiB    2611 KiB    4301 KiB
+FLD::NewtonKrylov::Jacobian_action    263296      65 KiB     109 KiB     229 KiB     614 KiB     746 KiB    1229 KiB
+FLD::cloud_linearized_residual        263296    8450   B      10 KiB      20 KiB     614 KiB     746 KiB    1229 KiB
+FLD::cloud_newton_prepare              35904    1065   B    1455   B    2853   B     614 KiB     746 KiB    1229 KiB
+FLD::cloud_predictor                   28288     115 KiB     139 KiB     230 KiB     614 KiB     746 KiB    1229 KiB
+FLD::cloud_residual                    71808    2110   B    2888   B    5756   B     614 KiB     746 KiB    1229 KiB
+FillBoundary_nowait()                3018496     366   B    3217   B    7858   B     176 KiB     371 KiB     546 KiB
+SpMatrix::gather_pair_plan           2684374      50   B     118   B     293   B      97 KiB     191 KiB     432 KiB
+SpMatrix::startComm_mv              30330338      26 KiB      49 KiB     111 KiB      97 KiB     191 KiB     432 KiB
+SpMatrix::gatherRemote               3164999     160   B     403   B     565   B      81 KiB     172 KiB     317 KiB
 FillPatchTwoLevels                    181504       0   B      18   B     160   B       0   B      11 KiB      82 KiB
 CellConservativeLinear::interp()       90752       0   B       0   B       6   B       0   B    1755   B      12 KiB
-amrex::average_down                   693248       2   B      18   B     282   B    8192   B    9362   B      12 KiB
+amrex::average_down                   693248       2   B      18   B     283   B    8192   B    9362   B      12 KiB
 --------------------------------------------------------------------------------------------------------------------
 
 
-MPICH Slingshot Network Summary: 6 network timeouts
+MPICH Slingshot Network Summary: 12 network timeouts
 
-AMReX (26.09-214-gfe5bcbff5c13) finalized
+MPICH Slingshot CXI Counter Summary:
+Counter                                Samples          Min         (/s)         Mean         (/s)          Max         (/s)
+rh:sct_timeouts                              2            1          0.0            1          0.0            1          0.0
+rh:spt_timeouts                              2            5          0.0            5          0.0            5          0.0
+atu_cache_evictions                         32       369682       2042.4       988808       5463.0      4000664      22103.1
+atu_cache_hit_base_page_size_0              32     62170222     343481.9     81122287     448189.4    130282210     719791.2
+atu_cache_hit_derivative1_page_size_0       32     21118028     116674.2     32370918     178844.9     72227511     399047.0
+lpe_net_match_priority_0                    32      6781349      37466.0      8299633      45854.3      9791378      54096.0
+lpe_net_match_overflow_0                    32      1213098       6702.2      4679158      25851.7     17104818      94501.8
+lpe_net_match_request_0                     32           19          0.1          132          0.7          671          3.7
+lpe_rndzv_puts_0                            32        47933        264.8       104376        576.7       320299       1769.6
+lpe_rndzv_puts_offloaded_0                  32        47933        264.8       104376        576.7       320299       1769.6
+hni_rx_paused_0                             32       395312       2184.0     14710981      81276.1     79532344     439405.2
+hni_rx_paused_1                             32       619644       3423.4    433507825    2395070.9   3616577105   19981089.0
+hni_tx_paused_0                              2         1609          8.9         5438         30.0         9266         51.2
+hni_tx_paused_1                             28        62821        347.1       469870       2596.0      1154409       6378.0
+parbs_tarb_pi_posted_pkts                   32     61037807     337225.5    117841710     651059.2    385789702    2131434.8
+parbs_tarb_pi_posted_blocked_cnt            32      7009452      38726.3    714070434    3945140.5   5590394060   30886155.0
+parbs_tarb_pi_non_posted_pkts               32     72229465     399057.8     95427922     527226.1    154455431     853344.9
+parbs_tarb_pi_non_posted_blocked_cnt        32      4783270      26426.9     34556816     190921.6    120893411     667919.4
+pct_mst_hit_on_som                           1            1          0.0            1          0.0            1          0.0
+rh:nack_resource_busy                        1            1          0.0            1          0.0            1          0.0
+rh:nacks                                     3            1          0.0           22          0.1           63          0.3
+rh:nack_sequence_error                       1           62          0.3           62          0.3           62          0.3
+rh:pkts_cancelled_o                          2            1          0.0            1          0.0            1          0.0
+AMReX (26.09-215-g34fcca894d99) finalized
