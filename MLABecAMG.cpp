@@ -872,35 +872,91 @@ struct MLABecLapAMG::Impl
         current_preconditioner_applications = 0;
         current_preconditioner_seconds = 0.0;
         ++solve_count;
+        auto const abort_once = [] (char const* message) {
+            if (ParallelDescriptor::IOProcessor()) {
+                if (message != nullptr) {
+                    amrex::Print() << message << std::endl;
+                }
+                ParallelDescriptor::Abort(1, false);
+            } else {
+                // The I/O rank terminates the communicator after writing the
+                // diagnostic; no other rank should return a failed solution.
+                ParallelDescriptor::Barrier();
+            }
+        };
         double const solve_start = amrex::second();
         gmres->solve(algebra_solution, algebra_rhs, relative_tolerance,
                      absolute_tolerance);
-        double const solve_seconds = amrex::second() - solve_start;
+        double solve_seconds = amrex::second() - solve_start;
         auto const& solver = gmres->getGMRES();
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            solver.getStatus() == 0,
-            "GMRES+multigrid did not converge in MLABecLapAMG::solve");
+        if (solver.getStatus() != 0) {
+            abort_once("GMRES+multigrid did not converge in "
+                       "MLABecLapAMG::solve");
+        }
 
         AlgVector<Real> residual(partition);
-        SpMV(residual, *matrix, algebra_solution);
-        LinComb(residual, Real(1), algebra_rhs, Real(-1), residual);
+        Real const rhs_norm = algebra_rhs.norm2();
+        Real const target =
+            amrex::max(absolute_tolerance, relative_tolerance * rhs_norm);
+        Real const check_target = Real(5) *
+                                  amrex::max(target, Real(1.e-30));
+        auto const true_residual = [&] () {
+            SpMV(residual, *matrix, algebra_solution);
+            LinComb(residual, Real(1), algebra_rhs, Real(-1), residual);
+            return residual.norm2();
+        };
+        Real absolute_residual = true_residual();
+        Real const initial_true_residual = absolute_residual;
+        int iterations = solver.getNumIters();
+        int restarts = 0;
+        while (absolute_residual > check_target && iterations < max_iter) {
+            // A GMRES recurrence can underestimate the residual. Continue
+            // from the current solution, with a fresh true residual, instead
+            // of accepting the estimated-convergence status.
+            gmres->getGMRES().setInitialGuessNonzero(true);
+            gmres->getGMRES().setMaxIters(max_iter - iterations);
+            double const retry_start = amrex::second();
+            gmres->solve(algebra_solution, algebra_rhs, Real(0),
+                         amrex::max(target, Real(1.e-30)));
+            solve_seconds += amrex::second() - retry_start;
+            iterations += solver.getNumIters();
+            ++restarts;
+            absolute_residual = true_residual();
+            if (solver.getStatus() != 0 || solver.getNumIters() == 0) {
+                break;
+            }
+        }
+        gmres->getGMRES().setInitialGuessNonzero(false);
+        gmres->getGMRES().setMaxIters(max_iter);
+        if (solver.getStatus() != 0) {
+            abort_once("GMRES+multigrid did not converge in "
+                       "MLABecLapAMG::solve");
+        }
         SolveInfo info;
-        info.iterations = solver.getNumIters();
+        info.iterations = iterations;
         info.preconditioner_applications =
             current_preconditioner_applications;
         info.solve_seconds = solve_seconds;
         info.preconditioner_seconds = current_preconditioner_seconds;
-        info.absolute_residual = residual.norm2();
-        Real const rhs_norm = algebra_rhs.norm2();
+        info.absolute_residual = absolute_residual;
         info.relative_residual =
-            info.absolute_residual / amrex::max(rhs_norm, Real(1.e-30));
-        Real const target =
-            amrex::max(absolute_tolerance, relative_tolerance * rhs_norm);
+            absolute_residual / amrex::max(rhs_norm, Real(1.e-30));
+        if (restarts > 0) {
+            amrex::Print()
+                << "MLABecLapAMG true-residual restart: solve=" << solve_count
+                << ", restarts=" << restarts
+                << ", iterations=" << iterations
+                << ", initial true residual=" << std::setprecision(17)
+                << initial_true_residual
+                << ", final true residual=" << absolute_residual
+                << ", check target=" << check_target << std::endl;
+        }
         if (info.absolute_residual >
-            Real(5) * amrex::max(target, Real(1.e-30))) {
+            check_target) {
             amrex::Print()
                 << "MLABecLapAMG residual check: solve=" << solve_count
                 << ", iterations=" << info.iterations
+                << ", restarts=" << restarts
                 << ", GMRES estimated residual="
                 << std::setprecision(17) << solver.getResidualNorm()
                 << ", GMRES initial residual="
@@ -911,10 +967,9 @@ struct MLABecLapAMG::Impl
                 << ", absolute tolerance=" << absolute_tolerance
                 << ", target=" << target << std::endl;
         }
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            info.absolute_residual <= Real(5) *
-                                          amrex::max(target, Real(1.e-30)),
-            "MLABecLapAMG true residual exceeds the requested tolerance");
+        if (info.absolute_residual > check_target) {
+            abort_once(nullptr);
+        }
 
         if (nlocal > 0) {
             Gpu::copyAsync(Gpu::deviceToHost, algebra_solution.data(),
