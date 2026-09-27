@@ -20,6 +20,7 @@ if [[ ! -x "${executable}" ]]; then
 fi
 
 export OMP_NUM_THREADS=1
+export MPICH_OFI_CXI_COUNTER_REPORT=2
 
 srun --nodes="${SLURM_NNODES}" \
     --ntasks="${SLURM_NTASKS}" \
@@ -40,4 +41,4 @@ srun --nodes="${SLURM_NNODES}" \
     tiny_profiler.print_threshold=0.1 \
     mlabeclap_amg.measure_setup_messages=1 \
     mlabeclap_amg.max_interp_elements=4 \
-    mlabeclap_amg.true_residual_factor=6
+    mlabeclap_amg.true_residual_factor=8

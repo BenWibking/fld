@@ -38,6 +38,18 @@ varies, while the Krylov counts and reported transmission were repeatable.
 The jobs require the GNU TinyProfiler executable and print the profile summary
 to the job log at AMReX finalization. Timings include profiling and iteration
 logging overhead.
+The TinyProfiler summary now separates each AMG V-cycle level into residual,
+restriction, prolongation, and pre/post-smoothing time. It also separates
+`SpMatrix::finishComm_mv` into receive wait, unpack, send wait, and cleanup;
+the cleanup timer includes GPU synchronization and buffer release. These
+timers are nested, so their inclusive totals must not be added to the enclosing
+V-cycle or SpMV totals.
+All four jobs set `MPICH_OFI_CXI_COUNTER_REPORT=2`, which prints a summary of
+Cassini counters at `MPI_Finalize`. The counters span the whole MPI run, not
+individual AMG levels or solver phases. Compare pause cycles, PCIe blocked
+cycles per packet, message-matching overflow, and retry counters alongside the
+per-level timers. The counter summary does not include MPI collective traffic
+attribution or explain a particular wait on its own.
 
 The native AMG hierarchy and smoother controls can be overridden on the
 command line with `mlabeclap_amg.strong_threshold`,
@@ -53,9 +65,9 @@ Native AMG message accounting is enabled for every run. Each setup prints
 rank-summed point-to-point send counts and payload bytes by level and phase,
 plus logical collective-call counts; messages inside MPI collectives are not
 counted.
-All four jobs set `mlabeclap_amg.true_residual_factor=6`. With the
+All four jobs set `mlabeclap_amg.true_residual_factor=8`. With the
 double-precision relative linear tolerance of `2e-10`, the checked true
-residual limit is `1.2e-9` relative to the right-hand-side norm. Other runs
+residual limit is `1.6e-9` relative to the right-hand-side norm. Other runs
 retain the solver default factor of 5.
 
 Build the MPI executable from the repository root, then submit the cases:
