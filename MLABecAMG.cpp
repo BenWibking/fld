@@ -379,6 +379,7 @@ struct MLABecLapAMG::Impl
         pp.query("verbose", verbose);
         pp.query("max_iter", max_iter);
         pp.query("restart_length", restart_length);
+        pp.query("measure_setup_messages", measure_setup_messages);
         pp.query("chebyshev_eigenvalue_iterations",
                  options.chebyshev_eigenvalue_iterations);
         if (query_configuration) {
@@ -686,6 +687,7 @@ struct MLABecLapAMG::Impl
                     amg->setPostSmooth(options.post_sweeps);
                     amg->setChebyshevDegree(options.chebyshev_order);
                     amg->setVerbose(verbose);
+                    amg->setMeasureSetupMessages(measure_setup_messages);
                     amg->setup();
                     amg_diagnostics.levels = amg->numLevels();
                     Long fine_nnz = 0;
@@ -1098,6 +1100,7 @@ struct MLABecLapAMG::Impl
     int max_iter = 500;
     int restart_length = 50;
     bool matrix_only = false;
+    bool measure_setup_messages = false;
     double last_setup_seconds = 0.0;
     int current_preconditioner_applications = 0;
     double current_preconditioner_seconds = 0.0;

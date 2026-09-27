@@ -21,6 +21,12 @@ multiple of 32 for AMR. The 74 sphere centroids are fixed in
 relaxed Penrose vertex patch. See
 `benchmarks/penrose-cloud-relaxation/RESULTS.md` for geometry and run results.
 
+For native AMG setup message counts, add
+`mlabeclap_amg.measure_setup_messages=1`. Each setup prints rank-summed
+point-to-point send calls and payload bytes by AMG level and phase, plus the
+sum of logical collective calls across ranks. The counts exclude messages
+generated inside MPI collectives and the reduction used to print the report.
+
 ## ICASE 2001-12 radiation diffusion
 
 The ICASE test extends the coupled equations, coefficients, and boundary data
