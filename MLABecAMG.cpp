@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <iomanip>
 #include <limits>
 #include <ostream>
 #include <type_traits>
@@ -870,6 +871,7 @@ struct MLABecLapAMG::Impl
         }
         current_preconditioner_applications = 0;
         current_preconditioner_seconds = 0.0;
+        ++solve_count;
         double const solve_start = amrex::second();
         gmres->solve(algebra_solution, algebra_rhs, relative_tolerance,
                      absolute_tolerance);
@@ -894,6 +896,21 @@ struct MLABecLapAMG::Impl
             info.absolute_residual / amrex::max(rhs_norm, Real(1.e-30));
         Real const target =
             amrex::max(absolute_tolerance, relative_tolerance * rhs_norm);
+        if (info.absolute_residual >
+            Real(5) * amrex::max(target, Real(1.e-30))) {
+            amrex::Print()
+                << "MLABecLapAMG residual check: solve=" << solve_count
+                << ", iterations=" << info.iterations
+                << ", GMRES estimated residual="
+                << std::setprecision(17) << solver.getResidualNorm()
+                << ", GMRES initial residual="
+                << solver.getInitialResidualNorm()
+                << ", true residual=" << info.absolute_residual
+                << ", rhs norm=" << rhs_norm
+                << ", relative tolerance=" << relative_tolerance
+                << ", absolute tolerance=" << absolute_tolerance
+                << ", target=" << target << std::endl;
+        }
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             info.absolute_residual <= Real(5) *
                                           amrex::max(target, Real(1.e-30)),
@@ -1103,6 +1120,7 @@ struct MLABecLapAMG::Impl
     bool measure_setup_messages = false;
     double last_setup_seconds = 0.0;
     int current_preconditioner_applications = 0;
+    int solve_count = 0;
     double current_preconditioner_seconds = 0.0;
 
     Gpu::PinnedVector<Real> boundary_rhs;
