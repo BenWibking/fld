@@ -820,7 +820,8 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     BL_PROFILE_VAR_STOP(cloud_setup);
     int predictor_steps = 20;
     ParmParse{}.query("cloud_predictor_steps", predictor_steps);
-    AMREX_ALWAYS_ASSERT(predictor_steps > 0);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        predictor_steps >= 0, "cloud_predictor_steps must be nonnegative");
     {
         BL_PROFILE("FLD::cloud_predictors");
         for (int predictor = 0; predictor < predictor_steps; ++predictor) {

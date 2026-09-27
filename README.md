@@ -21,6 +21,10 @@ multiple of 32 for AMR. The 74 sphere centroids are fixed in
 relaxed Penrose vertex patch. See
 `benchmarks/penrose-cloud-relaxation/RESULTS.md` for geometry and run results.
 
+`cloud_predictor_steps` limits the damped predictor solves before Newton-Krylov
+(default 20). Set it to `0` to skip predictors; negative counts are rejected.
+Set `cloud_flux_limiter=0` for the linear diffusion problem.
+
 For native AMG setup message counts, add
 `mlabeclap_amg.measure_setup_messages=1`. Each setup prints rank-summed
 point-to-point send calls and payload bytes by AMG level and phase, plus the

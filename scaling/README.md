@@ -17,9 +17,19 @@ output is enabled for every run.
 All four jobs set `cloud_opacity_contrast=1e5`: clear-cell extinction stays
 at `0.001`, and pure-cloud extinction is `100`. The default for other cloud
 runs remains a contrast of `1e6`.
-All four jobs set `cloud_predictor_steps=13`, the lowest median whole-case
-time in the local eight-rank `cloud_fine_n=128` sweep. The best count at the
-Frontier scaling resolutions has not yet been measured.
+All four jobs set `cloud_flux_limiter=0`, fixing the diffusion limiter to
+`1/3` so the problem is linear and the tests measure linear solver scaling.
+The existing Newton-Krylov driver still runs. Earlier logs
+with `limiter=on` solve a different, nonlinear problem and are not directly
+comparable to these runs.
+All four jobs set `cloud_predictor_steps=0` to skip predictors and start
+Newton-Krylov from the initial state. Negative counts are rejected.
+The local eight-rank linear case at `cloud_fine_n=128` converged with four
+Newton steps and 13 total Krylov iterations in 2.17 s whole-case wall,
+versus 23 total linear iterations and 2.66--2.73 s with one predictor.
+See `benchmarks/2026-09-27-linear-cloud-8rank/RESULTS.md`. Frontier-resolution
+iteration counts and timings remain to be measured. Rebuild the executable
+to include support for zero predictors before submitting these jobs.
 All four jobs enable `cloud_eisenstat_walker=1` for the cloud Newton solve.
 This uses Eisenstat--Walker Choice 2 for the GMRES relative tolerance, with
 initial value 0.5, gamma 0.9, exponent 2, upper cap 0.9, the published 0.1
