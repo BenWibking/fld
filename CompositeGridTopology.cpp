@@ -56,6 +56,24 @@ is_robin (LinOpBCType type) noexcept
     return type == LinOpBCType::Robin || type == LinOpBCType::Marshak;
 }
 
+std::unique_ptr<MultiFab>
+make_host_buffer (MultiFab const& source, int nghost)
+{
+    return std::make_unique<MultiFab>(
+        source.boxArray(), source.DistributionMap(), source.nComp(), nghost,
+        topology_host_info());
+}
+
+void
+stage_host (MultiFab& destination, MultiFab const& source, int nghost,
+            Periodicity const& periodicity, int source_nghost = 0)
+{
+    destination.setVal(Real(0));
+    destination.ParallelCopy(source, 0, 0, source.nComp(),
+                             IntVect(source_nghost), IntVect(nghost),
+                             periodicity);
+}
+
 } // namespace
 
 CompositeGridTopology::CompositeGridTopology (
@@ -215,7 +233,8 @@ CompositeGridTopology::buildRowsAndConnections ()
                         if (same_level_row >= 0) {
                             m_connections.push_back(Connection{
                                 local_row, Long(-1), same_level_row, level,
-                                direction, face, area / dx[direction], false,
+                                direction, face, neighbor,
+                                area / dx[direction], false,
                                 false});
                             continue;
                         }
@@ -269,7 +288,7 @@ CompositeGridTopology::buildRowsAndConnections ()
                                     if (fine_row >= 0) {
                                         m_connections.push_back(Connection{
                                             local_row, Long(-1), fine_row, level,
-                                            direction, fine_face,
+                                            direction, fine_face, fine_cell,
                                             fine_area / distance, true, true});
                                         ++fine_neighbor_count;
                                     }
@@ -308,7 +327,8 @@ CompositeGridTopology::buildRowsAndConnections ()
                             (dx[direction] + coarse_dx);
                         m_connections.push_back(Connection{
                             local_row, Long(-1), coarse_row, level, direction,
-                            face, area / distance, false, true});
+                            face, coarse_neighbor, area / distance, false,
+                            true});
                     }
                 }
             }
@@ -489,6 +509,252 @@ CompositeGridTopology::assemble (
     }
     result.local_minimum_diagonal = minimum_diagonal;
     result.local_maximum_off_diagonal = maximum_offdiag;
+    return result;
+}
+
+Gpu::PinnedVector<Real> const&
+CompositeGridTopology::residualWithoutAssembly (
+    Real ascalar, Real bscalar, Vector<MultiFab const*> const& state,
+    Vector<MultiFab const*> const& rhs,
+    Vector<MultiFab const*> const& acoef,
+    Vector<Array<MultiFab const*, AMREX_SPACEDIM>> const& bcoef,
+    Array<LinOpBCType, AMREX_SPACEDIM> const& lobc,
+    Array<LinOpBCType, AMREX_SPACEDIM> const& hibc,
+    BoundaryData const& boundary)
+{
+    BL_PROFILE("FLD::composite_residual_without_assembly");
+    int const nlevels = numLevels();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(state.size()) == nlevels &&
+                        static_cast<int>(rhs.size()) == nlevels &&
+                        static_cast<int>(acoef.size()) == nlevels &&
+                        static_cast<int>(bcoef.size()) == nlevels);
+
+    if (!m_residual_workspace) {
+        auto workspace = std::make_unique<ResidualWorkspace>();
+        workspace->host_state.resize(nlevels);
+        workspace->host_rhs.resize(nlevels);
+        workspace->host_acoef.resize(nlevels);
+        workspace->host_level_bc.resize(nlevels);
+        workspace->host_robin_a.resize(nlevels);
+        workspace->host_robin_b.resize(nlevels);
+        workspace->host_robin_f.resize(nlevels);
+        workspace->host_bcoef.resize(nlevels);
+        workspace->fine_state_on_coarse.resize(nlevels - 1);
+        workspace->coarse_state_on_fine.resize(nlevels - 1);
+        workspace->fine_b_on_coarse.resize(nlevels - 1);
+        workspace->result.resize(localRows());
+        for (int level = 0; level < nlevels; ++level) {
+            workspace->host_state[level] = make_host_buffer(*state[level], 1);
+#ifdef AMREX_USE_GPU
+            workspace->host_rhs[level] = make_host_buffer(*rhs[level], 0);
+            workspace->host_acoef[level] = make_host_buffer(*acoef[level], 0);
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                workspace->host_bcoef[level][direction] =
+                    make_host_buffer(*bcoef[level][direction], 0);
+            }
+#endif
+            if (level + 1 < nlevels) {
+                workspace->fine_state_on_coarse[level] =
+                    std::make_unique<MultiFab>(
+                        m_refined_coarse[level], m_dmap[level], 1, 1,
+                        topology_host_info());
+                BoxArray coarsened_fine = m_grids[level + 1];
+                coarsened_fine.coarsen(m_ref_ratio[level]);
+                workspace->coarse_state_on_fine[level] =
+                    std::make_unique<MultiFab>(
+                        coarsened_fine, m_dmap[level + 1], 1, 2,
+                        topology_host_info());
+                for (int direction = 0; direction < AMREX_SPACEDIM;
+                     ++direction) {
+                    BoxArray face_layout = m_refined_coarse[level];
+                    face_layout.convert(
+                        IntVect::TheDimensionVector(direction));
+                    workspace->fine_b_on_coarse[level][direction] =
+                        std::make_unique<MultiFab>(
+                            face_layout, m_dmap[level], 1, 0,
+                            topology_host_info());
+                }
+            }
+        }
+        m_residual_workspace = std::move(workspace);
+    }
+    auto& workspace = *m_residual_workspace;
+    auto& host_state = workspace.host_state;
+    auto& host_rhs = workspace.host_rhs;
+    auto& host_acoef = workspace.host_acoef;
+    auto& host_level_bc = workspace.host_level_bc;
+    auto& host_robin_a = workspace.host_robin_a;
+    auto& host_robin_b = workspace.host_robin_b;
+    auto& host_robin_f = workspace.host_robin_f;
+    auto& host_bcoef = workspace.host_bcoef;
+    auto& fine_state_on_coarse = workspace.fine_state_on_coarse;
+    auto& coarse_state_on_fine = workspace.coarse_state_on_fine;
+    auto& fine_b_on_coarse = workspace.fine_b_on_coarse;
+    bool const have_level_bc =
+        static_cast<int>(boundary.level.size()) == nlevels;
+    bool const have_robin =
+        static_cast<int>(boundary.robin_a.size()) == nlevels;
+    for (int level = 0; level < nlevels; ++level) {
+        auto const periodicity = m_geom[level].periodicity();
+        stage_host(*host_state[level], *state[level], 1, periodicity);
+#ifdef AMREX_USE_GPU
+        stage_host(*host_rhs[level], *rhs[level], 0, periodicity);
+        stage_host(*host_acoef[level], *acoef[level], 0, periodicity);
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            stage_host(*host_bcoef[level][direction],
+                       *bcoef[level][direction], 0, periodicity);
+        }
+        if (have_level_bc) {
+            if (!host_level_bc[level]) {
+                host_level_bc[level] =
+                    make_host_buffer(*boundary.level[level], 1);
+            }
+            stage_host(*host_level_bc[level], *boundary.level[level], 1,
+                       periodicity, 1);
+        }
+        if (have_robin) {
+            if (!host_robin_a[level]) {
+                host_robin_a[level] =
+                    make_host_buffer(*boundary.robin_a[level], 0);
+                host_robin_b[level] =
+                    make_host_buffer(*boundary.robin_b[level], 0);
+                host_robin_f[level] =
+                    make_host_buffer(*boundary.robin_f[level], 0);
+            }
+            stage_host(*host_robin_a[level], *boundary.robin_a[level], 0,
+                       periodicity);
+            stage_host(*host_robin_b[level], *boundary.robin_b[level], 0,
+                       periodicity);
+            stage_host(*host_robin_f[level], *boundary.robin_f[level], 0,
+                       periodicity);
+        }
+#endif
+    }
+
+#ifdef AMREX_USE_GPU
+    Vector<MultiFab const*> rhs_values(nlevels);
+    Vector<MultiFab const*> acoef_values(nlevels);
+    Vector<MultiFab const*> level_bc_values(nlevels);
+    Vector<MultiFab const*> robin_a_values(nlevels);
+    Vector<MultiFab const*> robin_b_values(nlevels);
+    Vector<MultiFab const*> robin_f_values(nlevels);
+    Vector<Array<MultiFab const*, AMREX_SPACEDIM>> bcoef_values(nlevels);
+    for (int level = 0; level < nlevels; ++level) {
+        rhs_values[level] = host_rhs[level].get();
+        acoef_values[level] = host_acoef[level].get();
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            bcoef_values[level][direction] =
+                host_bcoef[level][direction].get();
+        }
+        if (have_level_bc) {
+            level_bc_values[level] = host_level_bc[level].get();
+        }
+        if (have_robin) {
+            robin_a_values[level] = host_robin_a[level].get();
+            robin_b_values[level] = host_robin_b[level].get();
+            robin_f_values[level] = host_robin_f[level].get();
+        }
+    }
+#else
+    // CPU MultiFabs are host-readable; only state needs a copied halo.
+    auto const& rhs_values = rhs;
+    auto const& acoef_values = acoef;
+    auto const& bcoef_values = bcoef;
+    auto const& level_bc_values = boundary.level;
+    auto const& robin_a_values = boundary.robin_a;
+    auto const& robin_b_values = boundary.robin_b;
+    auto const& robin_f_values = boundary.robin_f;
+#endif
+
+    for (int level = 0; level + 1 < nlevels; ++level) {
+        fine_state_on_coarse[level]->setVal(Real(0));
+        fine_state_on_coarse[level]->ParallelCopy(
+            *host_state[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
+            m_geom[level + 1].periodicity());
+
+        coarse_state_on_fine[level]->setVal(Real(0));
+        coarse_state_on_fine[level]->ParallelCopy(
+            *host_state[level], 0, 0, 1, IntVect(0), IntVect(2),
+            m_geom[level].periodicity());
+
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            fine_b_on_coarse[level][direction]->setVal(Real(0));
+            fine_b_on_coarse[level][direction]->ParallelCopy(
+                *bcoef_values[level + 1][direction], 0, 0, 1, IntVect(0),
+                IntVect(0), m_geom[level + 1].periodicity());
+        }
+    }
+    Gpu::streamSynchronize();
+
+    auto& result = workspace.result;
+    for (Long row = 0; row < localRows(); ++row) {
+        Cell const& cell = m_cells[row];
+        Real const value =
+            host_state[cell.level]->atLocalIdx(cell.local_grid)(cell.index);
+        result[row] = ascalar *
+            acoef_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
+            value * cell.volume -
+            rhs_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
+                cell.volume;
+    }
+    for (auto const& connection : m_connections) {
+        Cell const& cell = m_cells[connection.local_row];
+        MultiFab const& coefficient_field =
+            connection.fine_coefficient_on_coarse_layout
+                ? *fine_b_on_coarse[connection.level][connection.direction]
+                : *bcoef_values[connection.level][connection.direction];
+        Real const coefficient = bscalar *
+            coefficient_field.atLocalIdx(cell.local_grid)(connection.face) *
+            connection.geometric_weight;
+        Real const source =
+            host_state[cell.level]->atLocalIdx(cell.local_grid)(cell.index);
+        Real target;
+        if (!connection.coarse_fine) {
+            target = host_state[cell.level]
+                         ->atLocalIdx(cell.local_grid)(connection.target);
+        } else if (connection.fine_coefficient_on_coarse_layout) {
+            target = fine_state_on_coarse[connection.level]
+                         ->atLocalIdx(cell.local_grid)(connection.target);
+        } else {
+            target = coarse_state_on_fine[connection.level - 1]
+                         ->atLocalIdx(cell.local_grid)(connection.target);
+        }
+        result[connection.local_row] += coefficient * (source - target);
+    }
+
+    for (auto const& physical : m_physical_faces) {
+        LinOpBCType const type = physical.side < 0
+                                     ? lobc[physical.direction]
+                                     : hibc[physical.direction];
+        if (type == LinOpBCType::Neumann) { continue; }
+        Cell const& cell = m_cells[physical.local_row];
+        Real const k = bcoef_values[physical.level][physical.direction]
+                           ->atLocalIdx(cell.local_grid)(physical.face);
+        Real const value =
+            host_state[cell.level]->atLocalIdx(cell.local_grid)(cell.index);
+        if (type == LinOpBCType::Dirichlet) {
+            AMREX_ALWAYS_ASSERT(have_level_bc);
+            Real const coefficient =
+                bscalar * k * physical.area / physical.distance;
+            Real const exterior = level_bc_values[physical.level]
+                                      ->atLocalIdx(cell.local_grid)(
+                                          physical.exterior);
+            result[physical.local_row] += coefficient * (value - exterior);
+        } else {
+            AMREX_ALWAYS_ASSERT(is_robin(type) && have_robin);
+            Real const aa = robin_a_values[physical.level]
+                                ->atLocalIdx(cell.local_grid)(physical.cell);
+            Real const bb = robin_b_values[physical.level]
+                                ->atLocalIdx(cell.local_grid)(physical.cell);
+            Real const ff = robin_f_values[physical.level]
+                                ->atLocalIdx(cell.local_grid)(physical.cell);
+            AMREX_ALWAYS_ASSERT(aa >= Real(0) && bb >= Real(0) &&
+                                aa + bb > Real(0));
+            Real const scale = bscalar * k * physical.area /
+                               (bb + aa * physical.distance);
+            result[physical.local_row] += scale * (aa * value - ff);
+        }
+    }
     return result;
 }
 

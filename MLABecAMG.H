@@ -177,6 +177,21 @@ class MLABecLapAMG
         amrex::Vector<amrex::MultiFab const*> const& input,
         amrex::Vector<amrex::MultiFab const*> const& rhs) const;
 
+    /** Evaluate the same composite residual directly from fields, without
+     *  assembling a matrix or AMG hierarchy. */
+    void residualWithoutAssembly (
+        amrex::Vector<amrex::MultiFab*> const& output,
+        amrex::Vector<amrex::MultiFab const*> const& input,
+        amrex::Vector<amrex::MultiFab const*> const& rhs,
+        amrex::Real ascalar, amrex::Real bscalar,
+        amrex::Vector<amrex::MultiFab const*> const& acoef,
+        amrex::Vector<
+            amrex::Array<amrex::MultiFab const*, AMREX_SPACEDIM>> const& bcoef,
+        amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const& lobc,
+        amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const& hibc,
+        amrex::Vector<amrex::MultiFab const*> const& level_bc_data,
+        RobinBCData const& robin_bc_data = {});
+
     [[nodiscard]] MLABecAMGDiagnostics const& diagnostics ()
         const noexcept;
 

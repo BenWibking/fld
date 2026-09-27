@@ -1181,7 +1181,89 @@ struct MLABecLapAMG::Impl
         }
     }
 
+    void residualWithoutAssembly (
+        Vector<MultiFab*> const& output,
+        Vector<MultiFab const*> const& input,
+        Vector<MultiFab const*> const& rhs,
+        Real ascalar, Real bscalar,
+        Vector<MultiFab const*> const& acoef,
+        Vector<Array<MultiFab const*, AMREX_SPACEDIM>> const& bcoef,
+        Array<LinOpBCType, AMREX_SPACEDIM> const& lobc,
+        Array<LinOpBCType, AMREX_SPACEDIM> const& hibc,
+        Vector<MultiFab const*> const& level_bc,
+        RobinBCData const& robin)
+    {
+        BL_PROFILE("FLD::MLABecLapAMG::residualWithoutAssembly");
+        validate_field_vectors(output, input);
+        validate_setup_inputs(acoef, bcoef, lobc, hibc, level_bc, robin);
+        int const nlevels = topology.numLevels();
+        AMREX_ALWAYS_ASSERT(static_cast<int>(rhs.size()) == nlevels);
+        for (int level = 0; level < nlevels; ++level) {
+            AMREX_ALWAYS_ASSERT(rhs[level] != nullptr &&
+                                rhs[level]->boxArray() ==
+                                    topology.grids()[level] &&
+                                rhs[level]->DistributionMap() ==
+                                    topology.dmap()[level] &&
+                                input[level]->DistributionMap() ==
+                                    topology.dmap()[level] &&
+                                output[level]->DistributionMap() ==
+                                    topology.dmap()[level] &&
+                                rhs[level]->nComp() == 1 &&
+                                rhs[level]->nGrow() == 0);
+        }
+        CompositeGridTopology::BoundaryData boundary{
+            level_bc, robin.a, robin.b, robin.f};
+        auto const& local = topology.residualWithoutAssembly(
+            ascalar, bscalar, input, rhs, acoef, bcoef, lobc, hibc,
+            boundary);
+#ifdef AMREX_USE_GPU
+        if (residual_host_output.empty()) {
+            residual_host_output.resize(nlevels);
+            for (int level = 0; level < nlevels; ++level) {
+                residual_host_output[level] = std::make_unique<MultiFab>(
+                    topology.grids()[level], topology.dmap()[level], 1, 0,
+                    host_info());
+            }
+        }
+        for (int level = 0; level < nlevels; ++level) {
+            residual_host_output[level]->setVal(Real(0));
+        }
+#else
+        for (int level = 0; level < nlevels; ++level) {
+            output[level]->setVal(Real(0), 0, 1, 0);
+        }
+#endif
+        auto const& cells = topology.cells();
+        for (Long row = 0; row < topology.localRows(); ++row) {
+            auto const& cell = cells[row];
+#ifdef AMREX_USE_GPU
+            residual_host_output[cell.level]
+                ->atLocalIdx(cell.local_grid)(cell.index) =
+                local[row] / cell.volume;
+#else
+            output[cell.level]->atLocalIdx(cell.local_grid)(cell.index) =
+                local[row] / cell.volume;
+#endif
+        }
+#ifdef AMREX_USE_GPU
+        for (int level = 0; level < nlevels; ++level) {
+            MultiFab::Copy(*output[level], *residual_host_output[level], 0,
+                           0, 1, 0);
+        }
+        Gpu::streamSynchronize();
+#endif
+        for (int level = nlevels - 2; level >= 0; --level) {
+            amrex::average_down(*output[level + 1], *output[level],
+                                topology.geometry()[level + 1],
+                                topology.geometry()[level], 0, 1,
+                                topology.refRatio()[level]);
+        }
+    }
+
     CompositeGridTopology topology;
+#ifdef AMREX_USE_GPU
+    Vector<std::unique_ptr<MultiFab>> residual_host_output;
+#endif
     MLABecAMGOptions options;
     MLABecAMGDiagnostics amg_diagnostics;
     MLABecPreconditioner selected_preconditioner =
@@ -1319,6 +1401,22 @@ MLABecLapAMG::residual (Vector<MultiFab*> const& output,
                         Vector<MultiFab const*> const& rhs) const
 {
     m_impl->residual(output, input, rhs);
+}
+
+void
+MLABecLapAMG::residualWithoutAssembly (
+    Vector<MultiFab*> const& output, Vector<MultiFab const*> const& input,
+    Vector<MultiFab const*> const& rhs, Real ascalar, Real bscalar,
+    Vector<MultiFab const*> const& acoef,
+    Vector<Array<MultiFab const*, AMREX_SPACEDIM>> const& bcoef,
+    Array<LinOpBCType, AMREX_SPACEDIM> const& lobc,
+    Array<LinOpBCType, AMREX_SPACEDIM> const& hibc,
+    Vector<MultiFab const*> const& level_bc,
+    RobinBCData const& robin)
+{
+    m_impl->residualWithoutAssembly(output, input, rhs, ascalar, bscalar,
+                                    acoef, bcoef, lobc, hibc, level_bc,
+                                    robin);
 }
 
 MLABecAMGDiagnostics const&

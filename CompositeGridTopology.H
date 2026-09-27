@@ -11,6 +11,8 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
 
+#include <memory>
+
 namespace fld_test
 {
 
@@ -82,6 +84,18 @@ class CompositeGridTopology
         amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const& hibc,
         BoundaryData const& boundary) const;
 
+    /** The returned workspace is overwritten by the next residual call. */
+    [[nodiscard]] amrex::Gpu::PinnedVector<amrex::Real> const& residualWithoutAssembly (
+        amrex::Real ascalar, amrex::Real bscalar,
+        amrex::Vector<amrex::MultiFab const*> const& state,
+        amrex::Vector<amrex::MultiFab const*> const& rhs,
+        amrex::Vector<amrex::MultiFab const*> const& acoef,
+        amrex::Vector<amrex::Array<amrex::MultiFab const*, AMREX_SPACEDIM>>
+            const& bcoef,
+        amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const& lobc,
+        amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const& hibc,
+        BoundaryData const& boundary);
+
   private:
     struct Connection
     {
@@ -91,6 +105,7 @@ class CompositeGridTopology
         int level = -1;
         int direction = -1;
         amrex::IntVect face = amrex::IntVect::TheZeroVector();
+        amrex::IntVect target = amrex::IntVect::TheZeroVector();
         amrex::Real geometric_weight = amrex::Real(0);
         bool fine_coefficient_on_coarse_layout = false;
         bool coarse_fine = false;
@@ -109,6 +124,24 @@ class CompositeGridTopology
         amrex::Real distance = amrex::Real(0);
     };
 
+    struct ResidualWorkspace
+    {
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_state;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_rhs;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_acoef;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_level_bc;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_robin_a;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_robin_b;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_robin_f;
+        amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>,
+                                   AMREX_SPACEDIM>> host_bcoef;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> fine_state_on_coarse;
+        amrex::Vector<std::unique_ptr<amrex::MultiFab>> coarse_state_on_fine;
+        amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>,
+                                   AMREX_SPACEDIM>> fine_b_on_coarse;
+        amrex::Gpu::PinnedVector<amrex::Real> result;
+    };
+
     void validateHierarchy ();
     void buildRowsAndConnections ();
     void buildPattern ();
@@ -124,6 +157,7 @@ class CompositeGridTopology
     amrex::Vector<PhysicalFace> m_physical_faces;
     amrex::Gpu::PinnedVector<amrex::Long> m_row_offset;
     amrex::Gpu::PinnedVector<amrex::Long> m_col_index;
+    std::unique_ptr<ResidualWorkspace> m_residual_workspace;
 };
 
 } // namespace fld_test

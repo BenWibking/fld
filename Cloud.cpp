@@ -6,6 +6,7 @@
 #include <AMReX_BLProfiler.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_Reduce.H>
 
 #include <cmath>
@@ -372,7 +373,6 @@ class CloudNewtonProblem
         : m_hierarchy(hierarchy), m_masks(masks), m_extinction(extinction),
           m_rhs(rhs), m_acoef(acoef), m_boundary(boundary),
           m_limited(limited), m_base_solver(base_solver), m_summary(summary),
-          m_trial_solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap),
           m_base_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_trial_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_base_bcoef(make_face_data(hierarchy)),
@@ -383,9 +383,7 @@ class CloudNewtonProblem
           m_trial_robin_a(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_b(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_f(make_cell_data(hierarchy, 1, 0))
-    {
-        m_trial_solver.setMatrixOnly(true);
-    }
+    {}
 
     void prepare (State const& state)
     {
@@ -422,21 +420,13 @@ class CloudNewtonProblem
     void residual (State const& state, State& output)
     {
         BL_PROFILE("FLD::cloud_residual");
-        setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
-              m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
-        m_trial_solver.residual(get_level_ptrs(output),
-                                get_level_const_ptrs(state),
-                                get_level_const_ptrs(m_rhs));
+        evaluate_residual(state, output);
     }
 
     void linearized_residual (State const& state, State& output)
     {
         BL_PROFILE("FLD::cloud_linearized_residual");
-        setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
-              m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
-        m_trial_solver.residual(get_level_ptrs(output),
-                                get_level_const_ptrs(state),
-                                get_level_const_ptrs(m_rhs));
+        evaluate_residual(state, output);
     }
 
     State makeVecRHS () const { return make_cell_data(m_hierarchy, 1, 0); }
@@ -509,9 +499,9 @@ class CloudNewtonProblem
     }
 
   private:
-    void setup (MLABecLapAMG& solver, State const& state,
-                LevelData& diffusion, FaceData& bcoef, LevelData& robin_a,
-                LevelData& robin_b, LevelData& robin_f)
+    void update_coefficients (State const& state, LevelData& diffusion,
+                              FaceData& bcoef, LevelData& robin_a,
+                              LevelData& robin_b, LevelData& robin_f)
     {
         State work = clone_level_data(state);
         compute_diffusion(m_hierarchy, work, m_extinction, diffusion,
@@ -519,12 +509,36 @@ class CloudNewtonProblem
         fill_face_coefficients(m_hierarchy, diffusion, &m_extinction, bcoef,
                                true);
         fill_robin_data(m_hierarchy, diffusion, robin_a, robin_b, robin_f);
+    }
+
+    void setup (MLABecLapAMG& solver, State const& state,
+                LevelData& diffusion, FaceData& bcoef, LevelData& robin_a,
+                LevelData& robin_b, LevelData& robin_f)
+    {
+        update_coefficients(state, diffusion, bcoef, robin_a, robin_b,
+                            robin_f);
         RobinBCData robin{get_level_const_ptrs(robin_a),
                           get_level_const_ptrs(robin_b),
                           get_level_const_ptrs(robin_f)};
         solver.setup(Real(0), Real(1), get_level_const_ptrs(m_acoef),
                      get_face_const_ptrs(bcoef), m_boundary.lo,
                      m_boundary.hi, {}, robin);
+    }
+
+    void evaluate_residual (State const& state, State& output)
+    {
+        update_coefficients(state, m_trial_diffusion, m_trial_bcoef,
+                            m_trial_robin_a, m_trial_robin_b,
+                            m_trial_robin_f);
+        RobinBCData robin{get_level_const_ptrs(m_trial_robin_a),
+                          get_level_const_ptrs(m_trial_robin_b),
+                          get_level_const_ptrs(m_trial_robin_f)};
+        m_base_solver.residualWithoutAssembly(
+            get_level_ptrs(output), get_level_const_ptrs(state),
+            get_level_const_ptrs(m_rhs), Real(0), Real(1),
+            get_level_const_ptrs(m_acoef),
+            get_face_const_ptrs(m_trial_bcoef), m_boundary.lo,
+            m_boundary.hi, {}, robin);
     }
 
     DiffusionHierarchy const& m_hierarchy;
@@ -536,7 +550,6 @@ class CloudNewtonProblem
     bool m_limited;
     MLABecLapAMG& m_base_solver;
     SolverSummary& m_summary;
-    MLABecLapAMG m_trial_solver;
     LevelData m_base_diffusion;
     LevelData m_trial_diffusion;
     FaceData m_base_bcoef;
@@ -787,9 +800,12 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
                                physical_boundary, limited, solver,
                                result.solver);
     BL_PROFILE_VAR_STOP(cloud_setup);
+    int predictor_steps = 20;
+    ParmParse{}.query("cloud_predictor_steps", predictor_steps);
+    AMREX_ALWAYS_ASSERT(predictor_steps > 0);
     {
         BL_PROFILE("FLD::cloud_predictors");
-        for (int predictor = 0; predictor < 20; ++predictor) {
+        for (int predictor = 0; predictor < predictor_steps; ++predictor) {
             if (problem.predict(state, Real(0.7)) < Real(1.e-3)) {
                 break;
             }
@@ -804,6 +820,9 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     newton_options.linear_verbosity = iteration_output ? 2 : 0;
     newton_options.centered_difference = false;
     newton_options.problem_name = "The cloud-layer FLD system";
+    int eisenstat_walker = 0;
+    ParmParse{}.query("cloud_eisenstat_walker", eisenstat_walker);
+    newton_options.eisenstat_walker = (eisenstat_walker != 0);
     NewtonKrylovSolver<CloudNewtonProblem> newton(problem, newton_options);
     auto const nonlinear = newton.solve(state);
     result.final_nonlinear_change = nonlinear.final_change;

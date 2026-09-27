@@ -4,6 +4,7 @@
 #include <AMReX.H>
 #include <AMReX_BLProfiler.H>
 #include <AMReX_GMRES.H>
+#include <AMReX_Print.H>
 
 #include <cmath>
 #include <limits>
@@ -18,6 +19,11 @@ struct NewtonKrylovOptions
 {
     amrex::Real nonlinear_tolerance = amrex::Real(1.e-7);
     amrex::Real linear_tolerance = amrex::Real(1.e-4);
+    bool eisenstat_walker = false;
+    amrex::Real ew_initial_tolerance = amrex::Real(0.5);
+    amrex::Real ew_maximum_tolerance = amrex::Real(0.9);
+    amrex::Real ew_gamma = amrex::Real(0.9);
+    amrex::Real ew_alpha = amrex::Real(2);
     amrex::Real armijo_coefficient = amrex::Real(1.e-4);
     int maximum_nonlinear_iterations = 20;
     int maximum_linear_iterations = 100;
@@ -58,6 +64,17 @@ template <typename Problem> class NewtonKrylovSolver
     {
         AMREX_ALWAYS_ASSERT(m_options.nonlinear_tolerance > RT(0));
         AMREX_ALWAYS_ASSERT(m_options.linear_tolerance > RT(0));
+        if (m_options.eisenstat_walker) {
+            AMREX_ALWAYS_ASSERT(m_options.linear_tolerance <
+                                m_options.ew_maximum_tolerance);
+            AMREX_ALWAYS_ASSERT(m_options.ew_initial_tolerance > RT(0) &&
+                                m_options.ew_initial_tolerance < RT(1));
+            AMREX_ALWAYS_ASSERT(m_options.ew_maximum_tolerance < RT(1));
+            AMREX_ALWAYS_ASSERT(m_options.ew_gamma > RT(0) &&
+                                m_options.ew_gamma <= RT(1));
+            AMREX_ALWAYS_ASSERT(m_options.ew_alpha > RT(1) &&
+                                m_options.ew_alpha <= RT(2));
+        }
         AMREX_ALWAYS_ASSERT(m_options.armijo_coefficient > RT(0));
         AMREX_ALWAYS_ASSERT(m_options.maximum_nonlinear_iterations > 0);
         AMREX_ALWAYS_ASSERT(m_options.maximum_linear_iterations > 0);
@@ -79,8 +96,42 @@ template <typename Problem> class NewtonKrylovSolver
             return result;
         }
 
+        RT previous_residual_norm = result.final_residual_norm;
+        RT previous_linear_tolerance = m_options.ew_initial_tolerance;
         for (int iteration = 0;
              iteration < m_options.maximum_nonlinear_iterations; ++iteration) {
+            RT const forcing_residual_norm = result.final_residual_norm;
+            RT linear_tolerance = m_options.linear_tolerance;
+            if (m_options.eisenstat_walker) {
+                if (iteration == 0) {
+                    linear_tolerance = m_options.ew_initial_tolerance;
+                } else {
+                    // Eisenstat--Walker Choice 2 (SISC 17, 1996, 16-32),
+                    // with its safeguard against reducing the forcing term
+                    // too quickly.  The fixed tolerance is a floor for noisy
+                    // finite-difference Jv.
+                    RT const ratio = forcing_residual_norm /
+                                     previous_residual_norm;
+                    linear_tolerance = m_options.ew_gamma *
+                                       std::pow(ratio, m_options.ew_alpha);
+                    RT const safeguard = m_options.ew_gamma * std::pow(
+                        previous_linear_tolerance, m_options.ew_alpha);
+                    if (safeguard > RT(0.1)) {
+                        linear_tolerance = amrex::max(linear_tolerance,
+                                                       safeguard);
+                    }
+                }
+                linear_tolerance = amrex::max(
+                    m_options.linear_tolerance,
+                    amrex::min(linear_tolerance,
+                               m_options.ew_maximum_tolerance));
+                if (m_options.linear_verbosity > 0) {
+                    amrex::Print() << m_options.problem_name << " Newton "
+                                   << iteration << ": residual="
+                                   << forcing_residual_norm << ", GMRES rtol="
+                                   << linear_tolerance << '\n';
+                }
+            }
             {
                 BL_PROFILE("FLD::NewtonKrylov::prepare");
                 m_problem.prepare(state);
@@ -99,7 +150,7 @@ template <typename Problem> class NewtonKrylovSolver
             linearized.linComb(linear_rhs, RT(-1), residual, RT(0), residual);
             {
                 BL_PROFILE("FLD::NewtonKrylov::linear_solve");
-                gmres.solve(correction, linear_rhs, m_options.linear_tolerance,
+                gmres.solve(correction, linear_rhs, linear_tolerance,
                             RT(0));
             }
             std::string const linear_failure =
@@ -153,6 +204,8 @@ template <typename Problem> class NewtonKrylovSolver
                                              line_search_failure.c_str());
 
             result.final_change = m_problem.relative_change(candidate, state);
+            previous_residual_norm = residual_norm;
+            previous_linear_tolerance = linear_tolerance;
             m_problem.assign(state, candidate);
             m_problem.assign(residual, candidate_residual);
             ++result.nonlinear_iterations;
