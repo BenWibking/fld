@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-executable="./main3d.gnu.x86-trento.TPROF.MPI.ex"
+executable="../main3d.gnu.x86-trento.TPROF.MPI.ex"
 
 if [[ ! -x "${executable}" ]]; then
     echo "error: executable not found: ${executable}" >&2
