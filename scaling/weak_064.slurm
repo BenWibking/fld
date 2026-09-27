@@ -2,7 +2,7 @@
 #SBATCH --account=ast236
 #SBATCH --job-name=fld-ws-064
 #SBATCH --output=%x-%j.out
-#SBATCH --time=00:30:00
+#SBATCH --time=00:05:00
 #SBATCH --partition=batch
 #SBATCH --nodes=64
 #SBATCH --ntasks=3584
