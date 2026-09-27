@@ -21,6 +21,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cctype>
 #include <iomanip>
@@ -924,6 +925,8 @@ struct MLABecLapAMG::Impl
         int iterations = solver.getNumIters();
         int restarts = 0;
         int constexpr max_true_residual_restarts = 3;
+        std::array<Real, max_true_residual_restarts + 1> true_residual_history{};
+        true_residual_history[0] = absolute_residual;
         while (absolute_residual > check_target && iterations < max_iter &&
                restarts < max_true_residual_restarts) {
             // A GMRES recurrence can underestimate the residual. Continue
@@ -938,6 +941,7 @@ struct MLABecLapAMG::Impl
             iterations += solver.getNumIters();
             ++restarts;
             absolute_residual = true_residual();
+            true_residual_history[restarts] = absolute_residual;
             if (solver.getStatus() != 0 || solver.getNumIters() == 0) {
                 break;
             }
@@ -969,7 +973,8 @@ struct MLABecLapAMG::Impl
         }
         if (info.absolute_residual >
             check_target) {
-            amrex::Print()
+            auto out = amrex::Print();
+            out
                 << "MLABecLapAMG residual check: solve=" << solve_count
                 << ", iterations=" << info.iterations
                 << ", restarts=" << restarts
@@ -982,7 +987,13 @@ struct MLABecLapAMG::Impl
                 << ", relative tolerance=" << relative_tolerance
                 << ", absolute tolerance=" << absolute_tolerance
                 << ", target=" << target
-                << ", check target=" << check_target << std::endl;
+                << ", check target=" << check_target
+                << ", true residual history=[";
+            for (int i = 0; i <= restarts; ++i) {
+                if (i != 0) { out << ", "; }
+                out << true_residual_history[i];
+            }
+            out << "]" << std::endl;
         }
         if (info.absolute_residual > check_target) {
             abort_once(nullptr);

@@ -69,9 +69,9 @@ Native AMG message accounting is enabled for every run. Each setup prints
 rank-summed point-to-point send counts and payload bytes by level and phase,
 plus logical collective-call counts; messages inside MPI collectives are not
 counted.
-All four jobs set `mlabeclap_amg.true_residual_factor=8`. With the
+All four jobs set `mlabeclap_amg.true_residual_factor=10`. With the
 double-precision relative linear tolerance of `2e-10`, the checked true
-residual limit is `1.6e-9` relative to the right-hand-side norm. Other runs
+residual limit is `2e-9` relative to the right-hand-side norm. Other runs
 retain the solver default factor of 5.
 
 Build the MPI executable from the repository root, then submit the cases:

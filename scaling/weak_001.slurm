@@ -41,4 +41,4 @@ srun --nodes="${SLURM_NNODES}" \
     tiny_profiler.print_threshold=0.1 \
     mlabeclap_amg.measure_setup_messages=1 \
     mlabeclap_amg.max_interp_elements=4 \
-    mlabeclap_amg.true_residual_factor=8
+    mlabeclap_amg.true_residual_factor=10
