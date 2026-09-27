@@ -20,6 +20,15 @@ runs remains a contrast of `1e6`.
 The jobs require the GNU TinyProfiler executable and print the profile summary
 to the job log at AMReX finalization. Timings include profiling and iteration
 logging overhead.
+
+The native AMG hierarchy and smoother controls can be overridden on the
+command line with `mlabeclap_amg.strong_threshold`,
+`mlabeclap_amg.max_interp_elements`, `mlabeclap_amg.max_levels`,
+`mlabeclap_amg.max_coarse_size`, `mlabeclap_amg.pre_sweeps`,
+`mlabeclap_amg.post_sweeps`, and `mlabeclap_amg.chebyshev_order`.
+Their defaults are `0.25`, `4`, `25`, `9`, `1`, `1`, and `4`, respectively.
+Set only one control per comparison and retain the same residual tolerance.
+All four scaling jobs set `mlabeclap_amg.max_interp_elements=6`.
 Native AMG message accounting is enabled for every run. Each setup prints
 rank-summed point-to-point send counts and payload bytes by level and phase,
 plus logical collective-call counts; messages inside MPI collectives are not

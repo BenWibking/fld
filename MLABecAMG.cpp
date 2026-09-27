@@ -383,6 +383,13 @@ struct MLABecLapAMG::Impl
         pp.query("restart_length", restart_length);
         pp.query("true_residual_factor", true_residual_factor);
         pp.query("measure_setup_messages", measure_setup_messages);
+        pp.query("strong_threshold", options.strong_threshold);
+        pp.query("max_interp_elements", options.max_interp_elements);
+        pp.query("max_levels", options.max_levels);
+        pp.query("max_coarse_size", options.max_coarse_size);
+        pp.query("pre_sweeps", options.pre_sweeps);
+        pp.query("post_sweeps", options.post_sweeps);
+        pp.query("chebyshev_order", options.chebyshev_order);
         pp.query("chebyshev_eigenvalue_iterations",
                  options.chebyshev_eigenvalue_iterations);
         if (query_configuration) {
