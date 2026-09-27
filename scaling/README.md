@@ -44,6 +44,10 @@ restriction, prolongation, and pre/post-smoothing time. It also separates
 the cleanup timer includes GPU synchronization and buffer release. These
 timers are nested, so their inclusive totals must not be added to the enclosing
 V-cycle or SpMV totals.
+The matrix-free AMR residual starts its coarse/fine state and face-coefficient
+copies before computing local row terms, then completes them before evaluating
+connections. `FLD::residual::*_start`, `*_finish`, and `local_rows` profile
+entries expose the overlap and remaining transfer wait time.
 All four jobs set `MPICH_OFI_CXI_COUNTER_REPORT=2`, which prints a summary of
 Cassini counters at `MPI_Finalize`. The counters span the whole MPI run, not
 individual AMG levels or solver phases. Compare pause cycles, PCIe blocked

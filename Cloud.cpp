@@ -451,6 +451,24 @@ class CloudNewtonProblem
                (m_state_scale * m_state_scale);
     }
 
+    void dotProducts (State const& lhs,
+                      Vector<State const*> const& basis,
+                      Vector<Real>& result) const
+    {
+        result.resize(basis.size());
+        for (std::size_t j = 0; j < basis.size(); ++j) {
+            result[j] = composite_weighted_dot(
+                lhs, *basis[j], m_hierarchy, m_masks, true);
+        }
+        if (!result.empty()) {
+            ParallelDescriptor::ReduceRealSum(result.data(),
+                                              int(result.size()));
+        }
+        for (Real& value : result) {
+            value /= m_state_scale * m_state_scale;
+        }
+    }
+
     void increment (State& lhs, State const& rhs, Real scale) const
     {
         saxpy_level_data(lhs, scale, rhs);

@@ -596,7 +596,10 @@ CompositeGridTopology::residualWithoutAssembly (
         static_cast<int>(boundary.robin_a.size()) == nlevels;
     for (int level = 0; level < nlevels; ++level) {
         auto const periodicity = m_geom[level].periodicity();
-        stage_host(*host_state[level], *state[level], 1, periodicity);
+        {
+            BL_PROFILE("FLD::residual::stage_state");
+            stage_host(*host_state[level], *state[level], 1, periodicity);
+        }
 #ifdef AMREX_USE_GPU
         stage_host(*host_rhs[level], *rhs[level], 0, periodicity);
         stage_host(*host_acoef[level], *acoef[level], 0, periodicity);
@@ -666,37 +669,66 @@ CompositeGridTopology::residualWithoutAssembly (
     auto const& robin_f_values = boundary.robin_f;
 #endif
 
+    // Start independent coarse/fine transfers before evaluating local rows.
     for (int level = 0; level + 1 < nlevels; ++level) {
         fine_state_on_coarse[level]->setVal(Real(0));
-        fine_state_on_coarse[level]->ParallelCopy(
-            *host_state[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
-            m_geom[level + 1].periodicity());
+        {
+            BL_PROFILE("FLD::residual::fine_state_start");
+            fine_state_on_coarse[level]->ParallelCopy_nowait(
+                *host_state[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
+                m_geom[level + 1].periodicity());
+        }
 
         coarse_state_on_fine[level]->setVal(Real(0));
-        coarse_state_on_fine[level]->ParallelCopy(
-            *host_state[level], 0, 0, 1, IntVect(0), IntVect(2),
-            m_geom[level].periodicity());
+        {
+            BL_PROFILE("FLD::residual::coarse_state_start");
+            coarse_state_on_fine[level]->ParallelCopy_nowait(
+                *host_state[level], 0, 0, 1, IntVect(0), IntVect(2),
+                m_geom[level].periodicity());
+        }
 
         for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
             fine_b_on_coarse[level][direction]->setVal(Real(0));
-            fine_b_on_coarse[level][direction]->ParallelCopy(
-                *bcoef_values[level + 1][direction], 0, 0, 1, IntVect(0),
-                IntVect(0), m_geom[level + 1].periodicity());
+            {
+                BL_PROFILE("FLD::residual::fine_b_start");
+                fine_b_on_coarse[level][direction]->ParallelCopy_nowait(
+                    *bcoef_values[level + 1][direction], 0, 0, 1,
+                    IntVect(0), IntVect(0),
+                    m_geom[level + 1].periodicity());
+            }
+        }
+    }
+
+    auto& result = workspace.result;
+    {
+        BL_PROFILE("FLD::residual::local_rows");
+        for (Long row = 0; row < localRows(); ++row) {
+            Cell const& cell = m_cells[row];
+            Real const value =
+                host_state[cell.level]->atLocalIdx(cell.local_grid)(cell.index);
+            result[row] = ascalar *
+                acoef_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
+                value * cell.volume -
+                rhs_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
+                    cell.volume;
+        }
+    }
+
+    for (int level = 0; level + 1 < nlevels; ++level) {
+        {
+            BL_PROFILE("FLD::residual::fine_state_finish");
+            fine_state_on_coarse[level]->ParallelCopy_finish();
+        }
+        {
+            BL_PROFILE("FLD::residual::coarse_state_finish");
+            coarse_state_on_fine[level]->ParallelCopy_finish();
+        }
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            BL_PROFILE("FLD::residual::fine_b_finish");
+            fine_b_on_coarse[level][direction]->ParallelCopy_finish();
         }
     }
     Gpu::streamSynchronize();
-
-    auto& result = workspace.result;
-    for (Long row = 0; row < localRows(); ++row) {
-        Cell const& cell = m_cells[row];
-        Real const value =
-            host_state[cell.level]->atLocalIdx(cell.local_grid)(cell.index);
-        result[row] = ascalar *
-            acoef_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
-            value * cell.volume -
-            rhs_values[cell.level]->atLocalIdx(cell.local_grid)(cell.index) *
-                cell.volume;
-    }
     for (auto const& connection : m_connections) {
         Cell const& cell = m_cells[connection.local_row];
         MultiFab const& coefficient_field =

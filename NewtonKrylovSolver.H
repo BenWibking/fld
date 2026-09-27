@@ -284,6 +284,18 @@ template <typename Problem> class NewtonKrylovSolver
             return m_problem.dotProduct(lhs, rhs);
         }
 
+        void dotProducts (State const& lhs,
+                          amrex::Vector<State const*> const& basis,
+                          amrex::Vector<RT>& result) const
+            requires requires (Problem& problem, State const& vector,
+                               amrex::Vector<State const*> const& vectors,
+                               amrex::Vector<RT>& dots) {
+                problem.dotProducts(vector, vectors, dots);
+            }
+        {
+            m_problem.dotProducts(lhs, basis, result);
+        }
+
         void increment (State& lhs, State const& rhs, RT scale) const
         {
             m_problem.increment(lhs, rhs, scale);

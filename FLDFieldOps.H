@@ -63,7 +63,8 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] amrex::Real composite_weighted_dot (
     LevelData const& lhs, LevelData const& rhs,
     DiffusionHierarchy const& hierarchy,
-    amrex::Vector<amrex::iMultiFab> const& masks);
+    amrex::Vector<amrex::iMultiFab> const& masks,
+    bool local_only = false);
 
 [[nodiscard]] amrex::Real composite_volume_sum (
     LevelData const& data, DiffusionHierarchy const& hierarchy,

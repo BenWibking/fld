@@ -248,7 +248,7 @@ get_face_const_ptrs (FaceData const& data)
 Real
 composite_weighted_dot (LevelData const& lhs, LevelData const& rhs,
                         DiffusionHierarchy const& hierarchy,
-                        Vector<iMultiFab> const& masks)
+                        Vector<iMultiFab> const& masks, bool local_only)
 {
     assert_compatible(lhs, rhs);
     AMREX_ALWAYS_ASSERT(lhs.size() == masks.size());
@@ -271,7 +271,9 @@ composite_weighted_dot (LevelData const& lhs, LevelData const& rhs,
         }
     }
     Real result = amrex::get<0>(reduce_data.value(reduce_op));
-    ParallelDescriptor::ReduceRealSum(result);
+    if (!local_only) {
+        ParallelDescriptor::ReduceRealSum(result);
+    }
     return result;
 }
 
