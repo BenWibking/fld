@@ -94,8 +94,10 @@ struct MLABecAMGDiagnostics
  * call.  A later `setup` replaces the matrix and preconditioner, while any
  * number of `solve` calls reuse the current setup.  Runtime selection uses
  * `<parmparse_prefix>.preconditioner = amg|mlmg` and
- * `<parmparse_prefix>.amg_backend = native|boomeramg`.  Each preconditioner
- * application performs one multigrid cycle.
+ * `<parmparse_prefix>.amg_backend = native|boomeramg`.  The optional
+ * `<parmparse_prefix>.true_residual_factor` sets the allowed multiple of the
+ * requested linear tolerance for the checked true residual (default 5).
+ * Each preconditioner application performs one multigrid cycle.
  *
  * Dirichlet values are read from the exterior ghost cells of
  * `level_bc_data`.  Homogeneous Neumann needs no data.  Robin and Marshak

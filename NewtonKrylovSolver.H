@@ -2,6 +2,7 @@
 #define NEWTON_KRYLOV_SOLVER_H_
 
 #include <AMReX.H>
+#include <AMReX_BLProfiler.H>
 #include <AMReX_GMRES.H>
 
 #include <cmath>
@@ -66,6 +67,7 @@ template <typename Problem> class NewtonKrylovSolver
 
     [[nodiscard]] NewtonKrylovResult solve (State& state)
     {
+        BL_PROFILE("FLD::NewtonKrylov::solve");
         NewtonKrylovResult result;
         State residual = m_problem.makeVecRHS();
         State candidate_residual = m_problem.makeVecRHS();
@@ -79,7 +81,10 @@ template <typename Problem> class NewtonKrylovSolver
 
         for (int iteration = 0;
              iteration < m_options.maximum_nonlinear_iterations; ++iteration) {
-            m_problem.prepare(state);
+            {
+                BL_PROFILE("FLD::NewtonKrylov::prepare");
+                m_problem.prepare(state);
+            }
             LinearizedOperator linearized(m_problem, state, residual,
                                           m_options.centered_difference);
             amrex::GMRES<State, LinearizedOperator> gmres;
@@ -92,8 +97,11 @@ template <typename Problem> class NewtonKrylovSolver
             linearized.setToZero(correction);
             State linear_rhs = linearized.makeVecRHS();
             linearized.linComb(linear_rhs, RT(-1), residual, RT(0), residual);
-            gmres.solve(correction, linear_rhs, m_options.linear_tolerance,
-                        RT(0));
+            {
+                BL_PROFILE("FLD::NewtonKrylov::linear_solve");
+                gmres.solve(correction, linear_rhs, m_options.linear_tolerance,
+                            RT(0));
+            }
             std::string const linear_failure =
                 m_options.problem_name +
                 " Newton linear solve did not converge";
@@ -107,6 +115,7 @@ template <typename Problem> class NewtonKrylovSolver
             bool accepted = false;
             State candidate = m_problem.clone(state);
             auto const try_line_search = [&] () {
+                BL_PROFILE("FLD::NewtonKrylov::line_search");
                 RT step_length = RT(1);
                 for (int line_search = 0;
                      line_search < m_options.maximum_line_search_iterations;
@@ -180,6 +189,7 @@ template <typename Problem> class NewtonKrylovSolver
 
         void apply (State& output, State const& direction)
         {
+            BL_PROFILE("FLD::NewtonKrylov::Jacobian_action");
             RT const direction_norm = norm2(direction);
             if (direction_norm == RT(0)) {
                 setToZero(output);

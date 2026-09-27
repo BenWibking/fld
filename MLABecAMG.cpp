@@ -4,6 +4,7 @@
 #include <AMReX.H>
 #include <AMReX_AlgVecUtil.H>
 #include <AMReX_Arena.H>
+#include <AMReX_BLProfiler.H>
 #include <AMReX_GMRES_MV.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MLABecLaplacian.H>
@@ -380,6 +381,7 @@ struct MLABecLapAMG::Impl
         pp.query("verbose", verbose);
         pp.query("max_iter", max_iter);
         pp.query("restart_length", restart_length);
+        pp.query("true_residual_factor", true_residual_factor);
         pp.query("measure_setup_messages", measure_setup_messages);
         pp.query("chebyshev_eigenvalue_iterations",
                  options.chebyshev_eigenvalue_iterations);
@@ -394,6 +396,8 @@ struct MLABecLapAMG::Impl
             selected_amg_backend = parse_amg_backend(std::move(backend));
         }
         AMREX_ALWAYS_ASSERT(max_iter > 0 && restart_length > 0);
+        AMREX_ALWAYS_ASSERT(std::isfinite(true_residual_factor) &&
+                            true_residual_factor >= Real(1));
 #ifndef AMREX_USE_HYPRE
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             selected_preconditioner != MLABecPreconditioner::AMG ||
@@ -581,6 +585,7 @@ struct MLABecLapAMG::Impl
         Vector<MultiFab const*> const& level_bc_input,
         RobinBCData const& robin_input)
     {
+        BL_PROFILE("FLD::MLABecLapAMG::assemble");
         double const setup_start = amrex::second();
         validate_setup_inputs(acoef_input, bcoef_input, lobc_input, hibc_input,
                               level_bc_input, robin_input);
@@ -804,6 +809,7 @@ struct MLABecLapAMG::Impl
     void apply_preconditioner (AlgVector<Real>& lhs,
                                AlgVector<Real> const& rhs)
     {
+        BL_PROFILE("FLD::MLABecLapAMG::preconditioner_cycle");
         double const start = amrex::second();
         ++current_preconditioner_applications;
         if (selected_preconditioner == MLABecPreconditioner::AMG) {
@@ -825,6 +831,7 @@ struct MLABecLapAMG::Impl
                      Vector<MultiFab const*> const& rhs,
                      Real relative_tolerance, Real absolute_tolerance)
     {
+        BL_PROFILE("FLD::MLABecLapAMG::solve");
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             matrix != nullptr && gmres != nullptr,
             "MLABecLapAMG::setup must be called before solve");
@@ -898,7 +905,7 @@ struct MLABecLapAMG::Impl
         Real const rhs_norm = algebra_rhs.norm2();
         Real const target =
             amrex::max(absolute_tolerance, relative_tolerance * rhs_norm);
-        Real const check_target = Real(5) *
+        Real const check_target = true_residual_factor *
                                   amrex::max(target, Real(1.e-30));
         auto const true_residual = [&] () {
             SpMV(residual, *matrix, algebra_solution);
@@ -909,7 +916,9 @@ struct MLABecLapAMG::Impl
         Real const initial_true_residual = absolute_residual;
         int iterations = solver.getNumIters();
         int restarts = 0;
-        while (absolute_residual > check_target && iterations < max_iter) {
+        int constexpr max_true_residual_restarts = 3;
+        while (absolute_residual > check_target && iterations < max_iter &&
+               restarts < max_true_residual_restarts) {
             // A GMRES recurrence can underestimate the residual. Continue
             // from the current solution, with a fresh true residual, instead
             // of accepting the estimated-convergence status.
@@ -941,7 +950,7 @@ struct MLABecLapAMG::Impl
         info.absolute_residual = absolute_residual;
         info.relative_residual =
             absolute_residual / amrex::max(rhs_norm, Real(1.e-30));
-        if (restarts > 0) {
+        if (restarts > 0 && absolute_residual <= check_target) {
             amrex::Print()
                 << "MLABecLapAMG true-residual restart: solve=" << solve_count
                 << ", restarts=" << restarts
@@ -965,7 +974,8 @@ struct MLABecLapAMG::Impl
                 << ", rhs norm=" << rhs_norm
                 << ", relative tolerance=" << relative_tolerance
                 << ", absolute tolerance=" << absolute_tolerance
-                << ", target=" << target << std::endl;
+                << ", target=" << target
+                << ", check target=" << check_target << std::endl;
         }
         if (info.absolute_residual > check_target) {
             abort_once(nullptr);
@@ -1000,6 +1010,7 @@ struct MLABecLapAMG::Impl
     void precondition (Vector<MultiFab*> const& output,
                        Vector<MultiFab const*> const& rhs)
     {
+        BL_PROFILE("FLD::MLABecLapAMG::precondition");
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             matrix != nullptr && gmres != nullptr,
             "MLABecLapAMG::setup must be called before precondition");
@@ -1063,6 +1074,7 @@ struct MLABecLapAMG::Impl
     void apply (Vector<MultiFab*> const& output,
                 Vector<MultiFab const*> const& input) const
     {
+        BL_PROFILE("FLD::MLABecLapAMG::apply");
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             matrix != nullptr,
             "MLABecLapAMG::setup must be called before apply");
@@ -1126,6 +1138,7 @@ struct MLABecLapAMG::Impl
                    Vector<MultiFab const*> const& input,
                    Vector<MultiFab const*> const& rhs) const
     {
+        BL_PROFILE("FLD::MLABecLapAMG::residual");
         apply(output, input);
         int const nlevels = topology.numLevels();
         AMREX_ALWAYS_ASSERT(static_cast<int>(rhs.size()) == nlevels);
@@ -1171,6 +1184,7 @@ struct MLABecLapAMG::Impl
     int verbose = 0;
     int max_iter = 500;
     int restart_length = 50;
+    Real true_residual_factor = Real(5);
     bool matrix_only = false;
     bool measure_setup_messages = false;
     double last_setup_seconds = 0.0;

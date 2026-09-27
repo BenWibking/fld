@@ -3,6 +3,7 @@
 #include "PenroseCloudCenters.H"
 
 #include <AMReX_AsyncOut.H>
+#include <AMReX_BLProfiler.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Reduce.H>
@@ -200,6 +201,7 @@ sphere_cell_fraction (Real x, Real y, Real z, Real hx, Real hy, Real hz,
 DiffusionHierarchy
 make_cloud_hierarchy (bool use_amr, int fine_n)
 {
+    BL_PROFILE("FLD::cloud_hierarchy");
     Array<int, AMREX_SPACEDIM> const nonperiodic{
         AMREX_D_DECL(0, 0, 0)};
     if (!use_amr) {
@@ -215,13 +217,13 @@ make_cloud_hierarchy (bool use_amr, int fine_n)
 void
 initialize_cloud_fields (DiffusionHierarchy const& hierarchy,
                          LevelData& state, LevelData& extinction,
-                         LevelData& cloud_fraction)
+                         LevelData& cloud_fraction, Real opacity_contrast)
 {
-    // Extinction (opacity) contrast of 1e6: the diffusion coefficient is
-    // D = lambda / extinction, so in the optically-thick limit D jumps from
-    // 1/(3*1000) inside the clouds to 1/(3*0.001) in the clear background.
+    BL_PROFILE("FLD::cloud_field_initialization");
+    // D = lambda / extinction, so the optically thick diffusion coefficient
+    // differs between pure cloud and clear cells by opacity_contrast.
     Real constexpr clear_extinction = Real(0.001);
-    Real constexpr cloudy_extinction = Real(1000);
+    Real const cloudy_extinction = clear_extinction * opacity_contrast;
     GpuArray<Real, penrose_cloud_count> centers_x{};
     GpuArray<Real, penrose_cloud_count> centers_z{};
     for (int cloud = 0; cloud < penrose_cloud_count; ++cloud) {
@@ -387,6 +389,7 @@ class CloudNewtonProblem
 
     void prepare (State const& state)
     {
+        BL_PROFILE("FLD::cloud_newton_prepare");
         auto const [minimum, maximum] =
             composite_minimum_maximum(state, m_masks);
         amrex::ignore_unused(minimum);
@@ -398,6 +401,7 @@ class CloudNewtonProblem
 
     Real predict (State& state, Real damping)
     {
+        BL_PROFILE("FLD::cloud_predictor");
         AMREX_ALWAYS_ASSERT(damping > Real(0) && damping <= Real(1));
         setup(m_base_solver, state, m_base_diffusion, m_base_bcoef,
               m_base_robin_a, m_base_robin_b, m_base_robin_f);
@@ -417,6 +421,7 @@ class CloudNewtonProblem
 
     void residual (State const& state, State& output)
     {
+        BL_PROFILE("FLD::cloud_residual");
         setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
               m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
         m_trial_solver.residual(get_level_ptrs(output),
@@ -426,6 +431,7 @@ class CloudNewtonProblem
 
     void linearized_residual (State const& state, State& output)
     {
+        BL_PROFILE("FLD::cloud_linearized_residual");
         setup(m_trial_solver, state, m_trial_diffusion, m_trial_bcoef,
               m_trial_robin_a, m_trial_robin_b, m_trial_robin_f);
         m_trial_solver.residual(get_level_ptrs(output),
@@ -438,6 +444,7 @@ class CloudNewtonProblem
 
     void precondition (State& output, State const& rhs)
     {
+        BL_PROFILE("FLD::cloud_precondition");
         set_level_data(output, Real(0));
         m_base_solver.precondition(get_level_ptrs(output),
                                    get_level_const_ptrs(rhs));
@@ -712,9 +719,14 @@ write_cloud_plotfile (std::string const& name,
 
 CloudResult
 run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
-           std::string const& plotfile_name)
+           std::string const& plotfile_name, Real opacity_contrast)
 {
+    BL_PROFILE("FLD::run_cloud");
+    BL_PROFILE_VAR_NS("FLD::cloud_setup", cloud_setup);
+    BL_PROFILE_VAR_START(cloud_setup);
     AMREX_ALWAYS_ASSERT(fine_n > 0 && fine_n % 4 == 0);
+    AMREX_ALWAYS_ASSERT(std::isfinite(opacity_contrast) &&
+                        opacity_contrast >= Real(1));
     Real const radius = cloud_radius();
     for (int first = 0; first < penrose_cloud_count; ++first) {
         Real const x = Real(penrose_cloud_centers_xz[first][0]);
@@ -737,7 +749,8 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     auto extinction = make_cell_data(hierarchy, 1, 1);
     auto diffusion = make_cell_data(hierarchy, 1, 1);
     auto cloud_fraction = make_cell_data(hierarchy, 1, 0);
-    initialize_cloud_fields(hierarchy, state, extinction, cloud_fraction);
+    initialize_cloud_fields(hierarchy, state, extinction, cloud_fraction,
+                            opacity_contrast);
     set_level_data(rhs, Real(0));
     set_level_data(acoef, Real(1));
 
@@ -773,9 +786,13 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     CloudNewtonProblem problem(hierarchy, masks, extinction, rhs, acoef,
                                physical_boundary, limited, solver,
                                result.solver);
-    for (int predictor = 0; predictor < 20; ++predictor) {
-        if (problem.predict(state, Real(0.7)) < Real(1.e-3)) {
-            break;
+    BL_PROFILE_VAR_STOP(cloud_setup);
+    {
+        BL_PROFILE("FLD::cloud_predictors");
+        for (int predictor = 0; predictor < 20; ++predictor) {
+            if (problem.predict(state, Real(0.7)) < Real(1.e-3)) {
+                break;
+            }
         }
     }
     NewtonKrylovOptions newton_options;
@@ -805,25 +822,28 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
         nonlinear.converged,
         "The cloud-layer FLD nonlinear iteration did not converge");
 
-    compute_diffusion(hierarchy, state, extinction, diffusion,
-                      physical_boundary, limited);
-    auto const [bottom_flux, top_flux] =
-        cloud_boundary_fluxes(hierarchy, state, diffusion, masks);
-    result.transmission = bottom_flux / incident_marshak_flux;
-    result.balance_error = std::abs(bottom_flux + top_flux) /
-                           amrex::max(std::abs(bottom_flux), Real(1.e-30));
-    auto const [minimum, maximum] =
-        composite_minimum_maximum(state, masks);
-    result.minimum_energy = minimum;
-    result.maximum_energy = maximum;
-    if (iteration_output) {
-        amrex::Print()
-            << "FLD cloud " << (use_amr ? "AMR" : "uniform")
-            << " Newton-Krylov iterations=" << result.nonlinear_iterations
-            << "/" << result.total_newton_krylov_iterations
-            << ", change=" << result.final_nonlinear_change
-            << ", residual=" << result.final_nonlinear_residual
-            << ", transmission=" << result.transmission << '\n';
+    {
+        BL_PROFILE("FLD::cloud_postprocessing");
+        compute_diffusion(hierarchy, state, extinction, diffusion,
+                          physical_boundary, limited);
+        auto const [bottom_flux, top_flux] =
+            cloud_boundary_fluxes(hierarchy, state, diffusion, masks);
+        result.transmission = bottom_flux / incident_marshak_flux;
+        result.balance_error = std::abs(bottom_flux + top_flux) /
+                               amrex::max(std::abs(bottom_flux), Real(1.e-30));
+        auto const [minimum, maximum] =
+            composite_minimum_maximum(state, masks);
+        result.minimum_energy = minimum;
+        result.maximum_energy = maximum;
+        if (iteration_output) {
+            amrex::Print()
+                << "FLD cloud " << (use_amr ? "AMR" : "uniform")
+                << " Newton-Krylov iterations=" << result.nonlinear_iterations
+                << "/" << result.total_newton_krylov_iterations
+                << ", change=" << result.final_nonlinear_change
+                << ", residual=" << result.final_nonlinear_residual
+                << ", transmission=" << result.transmission << '\n';
+        }
     }
     if (!plotfile_name.empty()) {
         write_cloud_plotfile(plotfile_name, hierarchy, state, extinction,

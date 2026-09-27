@@ -77,7 +77,8 @@ struct ICASE2001Result
 
 CloudResult run_cloud (bool use_amr, int fine_n, bool limited,
                        bool iteration_output,
-                       std::string const& plotfile_name);
+                       std::string const& plotfile_name,
+                       amrex::Real opacity_contrast = amrex::Real(1.e6));
 
 ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
                                 amrex::Real dt, bool iteration_output,

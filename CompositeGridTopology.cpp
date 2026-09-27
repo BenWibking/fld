@@ -2,6 +2,7 @@
 
 #include <AMReX.H>
 #include <AMReX_BaseFab.H>
+#include <AMReX_BLProfiler.H>
 #include <AMReX_BoxIterator.H>
 #include <AMReX_FabArray.H>
 #include <AMReX_MFIter.H>
@@ -63,6 +64,7 @@ CompositeGridTopology::CompositeGridTopology (
     : m_geom(std::move(geom)), m_grids(std::move(grids)),
       m_dmap(std::move(dmap))
 {
+    BL_PROFILE("FLD::composite_topology");
     static_assert(AMREX_SPACEDIM == 2 || AMREX_SPACEDIM == 3);
     validateHierarchy();
     buildRowsAndConnections();
@@ -373,6 +375,7 @@ CompositeGridTopology::assemble (
     Array<LinOpBCType, AMREX_SPACEDIM> const& hibc,
     BoundaryData const& boundary) const
 {
+    BL_PROFILE("FLD::composite_assembly");
     NumericalAssembly result;
     result.matrix.row_offset = m_row_offset;
     result.matrix.col_index = m_col_index;

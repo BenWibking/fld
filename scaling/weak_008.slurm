@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-executable="./main3d.gnu.x86-trento.MPI.ex"
+executable="./main3d.gnu.x86-trento.TPROF.MPI.ex"
 
 if [[ ! -x "${executable}" ]]; then
     echo "error: executable not found: ${executable}" >&2
@@ -31,5 +31,10 @@ srun --nodes="${SLURM_NNODES}" \
     "${executable}" \
     cloud_case=amr \
     cloud_fine_n=512 \
+    cloud_opacity_contrast=1e5 \
     cloud_write_plotfile=0 \
-    cloud_iteration_output=0
+    cloud_iteration_output=1 \
+    tiny_profiler.output_file=stdout \
+    tiny_profiler.print_threshold=0.1 \
+    mlabeclap_amg.measure_setup_messages=1 \
+    mlabeclap_amg.true_residual_factor=6

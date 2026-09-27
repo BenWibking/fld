@@ -3,6 +3,7 @@
 #include <AMReX.H>
 #include <AMReX_BC_TYPES.H>
 #include <AMReX_BCRec.H>
+#include <AMReX_BLProfiler.H>
 #include <AMReX_FillPatchUtil.H>
 #include <AMReX_Interpolater.H>
 #include <AMReX_MFIter.H>
@@ -396,6 +397,7 @@ compute_diffusion (DiffusionHierarchy const& hierarchy, LevelData& energy,
                    PhysicalBoundaryData const& boundary, bool limited,
                    Real* maximum_flux_fraction)
 {
+    BL_PROFILE("FLD::compute_diffusion");
     assert_compatible(energy, extinction);
     assert_compatible(energy, diffusion);
     fill_level_ghosts(energy, hierarchy);

@@ -26,6 +26,7 @@ main (int argc, char* argv[])
         int icase_iteration_output = 1;
         int icase_write_plotfile = 1;
         Real icase_dt = Real(0.01);
+        Real cloud_opacity_contrast = Real(1.e6);
         std::string icase_plotfile = "plt_icase_2001_3d";
         std::string cloud_case = "amr";
         std::string plotfile_prefix = "plt_cloud3d";
@@ -33,6 +34,7 @@ main (int argc, char* argv[])
         pp.query("cloud_fine_n", fine_n);
         pp.query("cloud_iteration_output", iteration_output);
         pp.query("cloud_flux_limiter", flux_limiter);
+        pp.query("cloud_opacity_contrast", cloud_opacity_contrast);
         pp.query("cloud_write_plotfile", write_plotfile);
         pp.query("cloud_case", cloud_case);
         pp.query("cloud_plotfile_prefix", plotfile_prefix);
@@ -101,13 +103,14 @@ main (int argc, char* argv[])
             CloudResult const result = run_cloud(
                 use_amr, fine_n, flux_limiter != 0,
                 iteration_output != 0,
-                plotfile);
+                plotfile, cloud_opacity_contrast);
             double wall_seconds = amrex::second() - start;
             ParallelDescriptor::ReduceRealMax(wall_seconds);
             amrex::Print()
                 << "FLD 3-D Penrose cloud: case="
                 << (use_amr ? "amr" : "uniform")
                 << ", fine_n=" << fine_n
+                << ", opacity contrast=" << cloud_opacity_contrast
                 << ", cells=" << result.cells
                 << ", limiter=" << (flux_limiter != 0 ? "on" : "off")
                 << ", mixed cells=" << result.mixed_cells
