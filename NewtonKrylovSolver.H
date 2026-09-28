@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -51,6 +52,10 @@ struct NewtonKrylovResult
  * algebra, admissibility test, candidate construction, and change metric.
  * `linearized_residual` is separate from `residual` so finite-difference
  * probes cannot overwrite coefficients retained by the preconditioner.
+ * `copy_state` refreshes valid and ghost cells in an existing trial vector.
+ * `norm2Data` computes scale-independent global squared-norm components;
+ * `norm2FromData` applies the current weights without communication. These
+ * components remain valid across prepare() for an unchanged vector.
  */
 template <typename Problem> class NewtonKrylovSolver
 {
@@ -89,13 +94,21 @@ template <typename Problem> class NewtonKrylovSolver
         State residual = m_problem.makeVecRHS();
         State candidate_residual = m_problem.makeVecRHS();
         m_problem.residual(state, residual);
-        result.final_residual_norm = m_problem.norm2(residual);
+        auto residual_norm_data = m_problem.norm2Data(residual);
+        result.final_residual_norm = m_problem.norm2FromData(residual_norm_data);
         if (result.final_residual_norm <= m_options.nonlinear_tolerance) {
             result.final_change = RT(0);
             result.converged = true;
             return result;
         }
 
+        // Reuse probe storage across products and Newton steps. Every probe
+        // refreshes it from the current base state, including ghost cells.
+        State trial_state = m_problem.makeVecLHS();
+        std::optional<State> residual_minus;
+        if (m_options.centered_difference) {
+            residual_minus.emplace(m_problem.makeVecRHS());
+        }
         RT previous_residual_norm = result.final_residual_norm;
         RT previous_linear_tolerance = m_options.ew_initial_tolerance;
         for (int iteration = 0;
@@ -137,7 +150,10 @@ template <typename Problem> class NewtonKrylovSolver
                 m_problem.prepare(state);
             }
             LinearizedOperator linearized(m_problem, state, residual,
-                                          m_options.centered_difference);
+                                          m_options.centered_difference,
+                                          trial_state,
+                                          residual_minus ? &*residual_minus
+                                                         : nullptr);
             amrex::GMRES<State, LinearizedOperator> gmres;
             gmres.define(linearized);
             gmres.setRestartLength(m_options.krylov_restart_length);
@@ -162,7 +178,9 @@ template <typename Problem> class NewtonKrylovSolver
             result.maximum_linear_iterations = amrex::max(
                 result.maximum_linear_iterations, gmres.getNumIters());
 
-            RT const residual_norm = m_problem.norm2(residual);
+            // The residual is unchanged, but prepare may change the norm's
+            // scaling weights. Reweight its cached global sums locally.
+            RT const residual_norm = m_problem.norm2FromData(residual_norm_data);
             bool accepted = false;
             State candidate = m_problem.clone(state);
             auto const try_line_search = [&] () {
@@ -175,13 +193,16 @@ template <typename Problem> class NewtonKrylovSolver
                                              step_length);
                     if (m_problem.admissible(candidate)) {
                         m_problem.residual(candidate, candidate_residual);
+                        auto const candidate_norm_data =
+                            m_problem.norm2Data(candidate_residual);
                         RT const candidate_norm =
-                            m_problem.norm2(candidate_residual);
+                            m_problem.norm2FromData(candidate_norm_data);
                         if (candidate_norm <=
                             (RT(1) -
                              m_options.armijo_coefficient * step_length) *
                                 residual_norm) {
                             result.final_residual_norm = candidate_norm;
+                            residual_norm_data = candidate_norm_data;
                             return true;
                         }
                     }
@@ -225,10 +246,16 @@ template <typename Problem> class NewtonKrylovSolver
         using RT = typename Problem::RT;
 
         LinearizedOperator (Problem& problem, State const& state,
-                            State const& residual, bool centered_difference)
+                            State const& residual, bool centered_difference,
+                            State& trial_state, State* residual_minus)
             : m_problem(problem), m_state(state), m_residual(residual),
-              m_centered_difference(centered_difference)
+              m_centered_difference(centered_difference),
+              m_state_norm(problem.norm2(state)), m_trial_state(trial_state),
+              m_residual_minus(residual_minus)
         {
+            // The base state is fixed for this inner solve. Each Newton step
+            // constructs a new operator after preparing the problem.
+            AMREX_ALWAYS_ASSERT(!m_centered_difference || m_residual_minus);
         }
 
         State makeVecRHS () const
@@ -252,16 +279,15 @@ template <typename Problem> class NewtonKrylovSolver
                 m_centered_difference
                     ? std::cbrt(std::numeric_limits<RT>::epsilon())
                     : std::sqrt(std::numeric_limits<RT>::epsilon());
-            RT const step = epsilon * (RT(1) + norm2(m_state)) / direction_norm;
-            State trial_plus = m_problem.clone(m_state);
-            increment(trial_plus, direction, step);
-            m_problem.linearized_residual(trial_plus, output);
+            RT const step = epsilon * (RT(1) + m_state_norm) / direction_norm;
+            m_problem.copy_state(m_trial_state, m_state);
+            increment(m_trial_state, direction, step);
+            m_problem.linearized_residual(m_trial_state, output);
             if (m_centered_difference) {
-                State trial_minus = m_problem.clone(m_state);
-                increment(trial_minus, direction, -step);
-                State residual_minus = makeVecRHS();
-                m_problem.linearized_residual(trial_minus, residual_minus);
-                increment(output, residual_minus, RT(-1));
+                m_problem.copy_state(m_trial_state, m_state);
+                increment(m_trial_state, direction, -step);
+                m_problem.linearized_residual(m_trial_state, *m_residual_minus);
+                increment(output, *m_residual_minus, RT(-1));
                 scale(output, RT(0.5) / step);
             } else {
                 increment(output, m_residual, RT(-1));
@@ -327,6 +353,9 @@ template <typename Problem> class NewtonKrylovSolver
         State const& m_state;
         State const& m_residual;
         bool m_centered_difference;
+        RT const m_state_norm;
+        State& m_trial_state;
+        State* m_residual_minus;
     };
 
     Problem& m_problem;

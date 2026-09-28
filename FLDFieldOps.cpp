@@ -90,9 +90,9 @@ clone_level_data (LevelData const& source)
         result[level] = std::make_unique<MultiFab>(
             source[level]->boxArray(), source[level]->DistributionMap(),
             source[level]->nComp(), source[level]->nGrowVect());
-        result[level]->setVal(Real(0));
+        // Identical layouts allow a full copy of every valid and ghost cell.
         MultiFab::Copy(*result[level], *source[level], 0, 0,
-                       source[level]->nComp(), source[level]->nGrow());
+                       source[level]->nComp(), source[level]->nGrowVect());
     }
     return result;
 }
@@ -104,6 +104,18 @@ copy_level_data (LevelData& destination, LevelData const& source, int nghost)
     for (int level = 0; level < static_cast<int>(source.size()); ++level) {
         AMREX_ALWAYS_ASSERT(nghost <= destination[level]->nGrow() &&
                             nghost <= source[level]->nGrow());
+        MultiFab::Copy(*destination[level], *source[level], 0, 0,
+                       source[level]->nComp(), nghost);
+    }
+}
+
+void
+copy_level_data_with_ghosts (LevelData& destination, LevelData const& source)
+{
+    assert_compatible(destination, source);
+    for (int level = 0; level < static_cast<int>(source.size()); ++level) {
+        int const nghost = source[level]->nGrow();
+        AMREX_ALWAYS_ASSERT(nghost <= destination[level]->nGrow());
         MultiFab::Copy(*destination[level], *source[level], 0, 0,
                        source[level]->nComp(), nghost);
     }
@@ -334,6 +346,30 @@ composite_minimum_maximum (LevelData const& data,
 }
 
 Real
+composite_maximum (LevelData const& data, Vector<iMultiFab> const& masks)
+{
+    AMREX_ALWAYS_ASSERT(data.size() == masks.size());
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    Real const low = std::numeric_limits<Real>::lowest();
+    for (int level = 0; level < static_cast<int>(data.size()); ++level) {
+        for (MFIter mfi(*data[level]); mfi.isValid(); ++mfi) {
+            auto const array = data[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                return {mask(i, j, k) ? array(i, j, k) : low};
+            });
+        }
+    }
+    Real result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceRealMax(result);
+    return result;
+}
+
+Real
 composite_maximum_relative_change (LevelData const& lhs, LevelData const& rhs,
                                    Vector<iMultiFab> const& masks)
 {
@@ -393,17 +429,49 @@ composite_all_finite (LevelData const& data, Vector<iMultiFab> const& masks)
     return result != 0;
 }
 
+bool
+composite_all_in_range (LevelData const& data, Vector<iMultiFab> const& masks,
+                        Real minimum, Real maximum)
+{
+    AMREX_ALWAYS_ASSERT(data.size() == masks.size());
+    ReduceOps<ReduceOpMin> reduce_op;
+    ReduceData<int> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(data.size()); ++level) {
+        for (MFIter mfi(*data[level]); mfi.isValid(); ++mfi) {
+            auto const array = data[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                Real const value = array(i, j, k);
+                bool const finite = value == value &&
+                                    amrex::Math::abs(value) <
+                                        std::numeric_limits<Real>::max();
+                bool const in_range = finite && value >= minimum &&
+                                      value <= maximum;
+                return {(!mask(i, j, k) || in_range) ? 1 : 0};
+            });
+        }
+    }
+    int result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceIntMin(result);
+    return result != 0;
+}
+
 void
 compute_diffusion (DiffusionHierarchy const& hierarchy, LevelData& energy,
                    LevelData& extinction, LevelData& diffusion,
                    PhysicalBoundaryData const& boundary, bool limited,
-                   Real* maximum_flux_fraction)
+                   Real* maximum_flux_fraction, bool extinction_ghosts_ready)
 {
     BL_PROFILE("FLD::compute_diffusion");
     assert_compatible(energy, extinction);
     assert_compatible(energy, diffusion);
     fill_level_ghosts(energy, hierarchy);
-    fill_level_ghosts(extinction, hierarchy);
+    if (!extinction_ghosts_ready) {
+        fill_level_ghosts(extinction, hierarchy);
+    }
 
     ReduceOps<ReduceOpMax> reduce_op;
     ReduceData<Real> reduce_data(reduce_op);
@@ -514,7 +582,7 @@ void
 fill_face_coefficients (DiffusionHierarchy const& hierarchy,
                         LevelData& diffusion, LevelData* extinction,
                         FaceData& face_coefficients,
-                        bool use_surface_opacity)
+                        bool use_surface_opacity, bool extinction_ghosts_ready)
 {
     AMREX_ALWAYS_ASSERT(diffusion.size() == face_coefficients.size());
     if (use_surface_opacity) {
@@ -522,7 +590,7 @@ fill_face_coefficients (DiffusionHierarchy const& hierarchy,
         assert_compatible(diffusion, *extinction);
     }
     fill_level_ghosts(diffusion, hierarchy);
-    if (extinction != nullptr) {
+    if (extinction != nullptr && !extinction_ghosts_ready) {
         fill_level_ghosts(*extinction, hierarchy);
     }
 

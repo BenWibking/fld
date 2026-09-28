@@ -35,6 +35,10 @@ struct PhysicalBoundaryData
 void copy_level_data (LevelData& destination, LevelData const& source,
                       int nghost = 0);
 
+// Copy valid cells and every source ghost cell into compatible storage.
+void copy_level_data_with_ghosts (LevelData& destination,
+                                 LevelData const& source);
+
 void set_level_data (LevelData& data, amrex::Real value);
 
 void lincomb_level_data (LevelData& destination, amrex::Real a,
@@ -73,6 +77,9 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] std::pair<amrex::Real, amrex::Real> composite_minimum_maximum (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
 
+[[nodiscard]] amrex::Real composite_maximum (
+    LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
+
 [[nodiscard]] amrex::Real composite_maximum_relative_change (
     LevelData const& lhs, LevelData const& rhs,
     amrex::Vector<amrex::iMultiFab> const& masks);
@@ -80,16 +87,26 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] bool composite_all_finite (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
 
+// Check finite values and inclusive bounds on uncovered valid cells with
+// one local pass and one global reduction.
+[[nodiscard]] bool composite_all_in_range (
+    LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks,
+    amrex::Real minimum, amrex::Real maximum);
+
+// Set extinction_ghosts_ready only when its halos match its current valid
+// values and hierarchy. The default refreshes halos for general callers.
 void compute_diffusion (DiffusionHierarchy const& hierarchy,
                         LevelData& energy, LevelData& extinction,
                         LevelData& diffusion,
                         PhysicalBoundaryData const& boundary, bool limited,
-                        amrex::Real* maximum_flux_fraction = nullptr);
+                        amrex::Real* maximum_flux_fraction = nullptr,
+                        bool extinction_ghosts_ready = false);
 
 void fill_face_coefficients (DiffusionHierarchy const& hierarchy,
                              LevelData& diffusion, LevelData* extinction,
                              FaceData& face_coefficients,
-                             bool use_surface_opacity);
+                             bool use_surface_opacity,
+                             bool extinction_ghosts_ready = false);
 
 } // namespace fld_test
 

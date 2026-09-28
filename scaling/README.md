@@ -22,6 +22,29 @@ All four jobs set `cloud_flux_limiter=0`, fixing the diffusion limiter to
 The existing Newton-Krylov driver still runs. Earlier logs
 with `limiter=on` solve a different, nonlinear problem and are not directly
 comparable to these runs.
+**Benchmark requirement:** rebuild the preconditioning matrix and AMG
+hierarchy at every Newton step, even with the limiter disabled. This is
+deliberate: the test emulates a true nonlinear solve in which the operator
+changes at each Newton step. Do not reuse the preconditioning matrix or
+hierarchy across Newton steps, or replace the Newton workflow with a single
+linear solve, as an optimization of this benchmark. Krylov matrix-vector
+actions remain matrix-free; matrix assembly is for preconditioning.
+Newton caches the accepted residual's scale-independent squared-norm sums
+and applies the current normalization after each `prepare`, eliminating one
+cloud norm reduction per Newton step without changing the line-search test.
+Cloud admissibility checks finite values and inclusive energy bounds in one
+local pass and one global reduction, instead of three global reductions.
+Cloud preparation computes only the maximum needed for normalization, saving
+another collective per Newton step. Cloning copies every valid and ghost
+cell directly, including unequal ghost widths, without first zeroing storage.
+Local checks are in `benchmarks/2026-09-27-min-clone/RESULTS.md`.
+See `benchmarks/2026-09-27-newton-collectives/RESULTS.md` for local checks.
+The cloud's fixed extinction halos are filled when its Newton problem is
+constructed and reused throughout predictors, residual probes, and Newton
+preparation. Energy/diffusion halos and numerical coefficients are refreshed
+on each evaluation. A changed extinction field or mesh requires a new halo
+fill. General field-operation callers still refresh extinction halos by
+default. See `benchmarks/2026-09-27-extinction-ghosts/RESULTS.md`.
 All four jobs set `cloud_predictor_steps=0` to skip predictors and start
 Newton-Krylov from the initial state. Negative counts are rejected.
 The local eight-rank linear case at `cloud_fine_n=128` converged with four
@@ -58,6 +81,29 @@ The matrix-free AMR residual starts its coarse/fine state and face-coefficient
 copies before computing local row terms, then completes them before evaluating
 connections. `FLD::residual::*_start`, `*_finish`, and `local_rows` profile
 entries expose the overlap and remaining transfer wait time.
+The matrix-free residual packs all directional fine face-coefficient copies
+into one message per peer per AMR level interface (splitting only payloads
+above MPI's count limit). Directional face layouts, periodic offsets, and
+copy ordering are retained. The geometric transfer plan and buffers are
+reused; coefficient values are repacked on every evaluation. Preconditioning
+matrix assembly uses a separate packed transfer workspace, refreshing its
+coefficient values on every assembly. Matrix values and the AMG hierarchy
+are rebuilt every Newton step.
+All jobs enable `mlabeclap_amg.measure_residual_messages=1`, which reports
+rank-summed separate versus packed send counts and payload bytes per residual
+evaluation once, when the plan is built. This adds one reporting reduction.
+All jobs also enable `mlabeclap_amg.measure_assembly_messages=1` for the
+corresponding per-assembly send counts and payload bytes. This reports once
+per topology and adds one reporting reduction. Assembly transfers have
+separate `FLD::assembly::fine_b_*` timers.
+The profile separates `fine_b_pack`, `fine_b_recv_wait`, `fine_b_unpack`, and
+`fine_b_send_wait`. For correctness checks, `mlabeclap_amg.verify_face_transfers=1`
+compares every copied face against the original `ParallelCopy` during both
+residual evaluation and matrix assembly;
+leave this verification disabled for timings because it performs extra copies
+and a checking reduction.
+Local assembly validation and message counts are recorded in
+`benchmarks/2026-09-27-packed-assembly/RESULTS.md`.
 All four jobs set `MPICH_OFI_CXI_COUNTER_REPORT=2`, which prints a summary of
 Cassini counters at `MPI_Finalize`. The counters span the whole MPI run, not
 individual AMG levels or solver phases. Compare pause cycles, PCIe blocked

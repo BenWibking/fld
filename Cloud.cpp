@@ -373,6 +373,7 @@ class CloudNewtonProblem
         : m_hierarchy(hierarchy), m_masks(masks), m_extinction(extinction),
           m_rhs(rhs), m_acoef(acoef), m_boundary(boundary),
           m_limited(limited), m_base_solver(base_solver), m_summary(summary),
+          m_coefficient_state(make_cell_data(hierarchy, 1, 1)),
           m_base_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_trial_diffusion(make_cell_data(hierarchy, 1, 1)),
           m_base_bcoef(make_face_data(hierarchy)),
@@ -383,14 +384,18 @@ class CloudNewtonProblem
           m_trial_robin_a(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_b(make_cell_data(hierarchy, 1, 0)),
           m_trial_robin_f(make_cell_data(hierarchy, 1, 0))
-    {}
+    {
+        // Extinction and the mesh remain fixed for this problem's lifetime.
+        // Only its halos are reused; diffusion coefficients are recomputed
+        // for every state and matrix/hierarchy setup still runs each step.
+        BL_PROFILE("FLD::cloud_extinction_ghost_fill");
+        fill_level_ghosts(m_extinction, m_hierarchy);
+    }
 
     void prepare (State const& state)
     {
         BL_PROFILE("FLD::cloud_newton_prepare");
-        auto const [minimum, maximum] =
-            composite_minimum_maximum(state, m_masks);
-        amrex::ignore_unused(minimum);
+        Real const maximum = composite_maximum(state, m_masks);
         m_state_scale = amrex::max(maximum, Real(1));
         setup(m_base_solver, state, m_base_diffusion, m_base_bcoef,
               m_base_robin_a, m_base_robin_b, m_base_robin_f);
@@ -445,6 +450,11 @@ class CloudNewtonProblem
         copy_level_data(lhs, rhs);
     }
 
+    void copy_state (State& destination, State const& source) const
+    {
+        copy_level_data_with_ghosts(destination, source);
+    }
+
     Real dotProduct (State const& lhs, State const& rhs) const
     {
         return composite_weighted_dot(lhs, rhs, m_hierarchy, m_masks) /
@@ -485,6 +495,19 @@ class CloudNewtonProblem
         return std::sqrt(amrex::max(dotProduct(state, state), Real(0)));
     }
 
+    // Cache scale-independent global sums for an unchanged residual. prepare()
+    // can then change the normalization without another reduction.
+    Real norm2Data (State const& state) const
+    {
+        return composite_weighted_dot(state, state, m_hierarchy, m_masks);
+    }
+
+    Real norm2FromData (Real sum) const
+    {
+        return std::sqrt(amrex::max(
+            sum / (m_state_scale * m_state_scale), Real(0)));
+    }
+
     void scale (State& state, Real factor) const
     {
         for (auto& level : state) {
@@ -505,10 +528,7 @@ class CloudNewtonProblem
 
     bool admissible (State const& state) const
     {
-        auto const [minimum, maximum] =
-            composite_minimum_maximum(state, m_masks);
-        return composite_all_finite(state, m_masks) && minimum >= Real(0) &&
-               maximum <= Real(4.01);
+        return composite_all_in_range(state, m_masks, Real(0), Real(4.01));
     }
 
     Real relative_change (State const& lhs, State const& rhs) const
@@ -521,11 +541,13 @@ class CloudNewtonProblem
                               FaceData& bcoef, LevelData& robin_a,
                               LevelData& robin_b, LevelData& robin_f)
     {
-        State work = clone_level_data(state);
-        compute_diffusion(m_hierarchy, work, m_extinction, diffusion,
-                          m_boundary, m_limited);
+        // Refresh valid and ghost cells; coefficients are recomputed every call.
+        copy_state(m_coefficient_state, state);
+        compute_diffusion(m_hierarchy, m_coefficient_state, m_extinction,
+                          diffusion, m_boundary, m_limited, nullptr,
+                          /*extinction_ghosts_ready=*/true);
         fill_face_coefficients(m_hierarchy, diffusion, &m_extinction, bcoef,
-                               true);
+                               true, /*extinction_ghosts_ready=*/true);
         fill_robin_data(m_hierarchy, diffusion, robin_a, robin_b, robin_f);
     }
 
@@ -568,6 +590,7 @@ class CloudNewtonProblem
     bool m_limited;
     MLABecLapAMG& m_base_solver;
     SolverSummary& m_summary;
+    LevelData m_coefficient_state;
     LevelData m_base_diffusion;
     LevelData m_trial_diffusion;
     FaceData m_base_bcoef;

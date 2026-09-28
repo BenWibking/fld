@@ -11,6 +11,7 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
 
+#include <map>
 #include <memory>
 
 namespace fld_test
@@ -124,6 +125,40 @@ class CompositeGridTopology
         amrex::Real distance = amrex::Real(0);
     };
 
+    // Preserve each face layout and ParallelCopy tag order, but concatenate
+    // directional payloads into one buffer per peer.
+    struct FaceTransfer
+    {
+        struct Tag
+        {
+            int direction;
+            amrex::FabArrayBase::CopyComTag copy;
+            std::size_t offset;
+        };
+        struct Peer
+        {
+            amrex::Vector<Tag> tags;
+            amrex::Gpu::PinnedVector<amrex::Real> data;
+        };
+        amrex::Vector<Tag> local;
+        std::map<int, Peer> sends;
+        std::map<int, Peer> receives;
+        amrex::Long separate_sends = 0;
+#ifdef AMREX_USE_MPI
+        amrex::Vector<MPI_Request> send_requests;
+        amrex::Vector<MPI_Request> receive_requests;
+#endif
+        bool active = false;
+        bool assembly = false;
+
+        void define (amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> const& dst,
+                     amrex::Array<amrex::MultiFab const*, AMREX_SPACEDIM> const& src,
+                     amrex::Periodicity const& periodicity);
+        void start (amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> const& dst,
+                    amrex::Array<amrex::MultiFab const*, AMREX_SPACEDIM> const& src);
+        void finish (amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> const& dst);
+    };
+
     struct ResidualWorkspace
     {
         amrex::Vector<std::unique_ptr<amrex::MultiFab>> host_state;
@@ -139,7 +174,21 @@ class CompositeGridTopology
         amrex::Vector<std::unique_ptr<amrex::MultiFab>> coarse_state_on_fine;
         amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>,
                                    AMREX_SPACEDIM>> fine_b_on_coarse;
+        amrex::Vector<FaceTransfer> fine_b_transfer;
+        bool face_plan_ready = false;
+        bool measure_residual_messages = false;
+        bool verify_face_transfers = false;
         amrex::Gpu::PinnedVector<amrex::Real> result;
+    };
+
+    // Only transfer geometry and storage persist; numerical values are
+    // overwritten on every assembly, and the returned matrix is always fresh.
+    struct AssemblyWorkspace
+    {
+        amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>,
+                                   AMREX_SPACEDIM>> fine_b_on_coarse;
+        amrex::Vector<FaceTransfer> fine_b_transfer;
+        bool verify_face_transfers = false;
     };
 
     void validateHierarchy ();
@@ -158,6 +207,7 @@ class CompositeGridTopology
     amrex::Gpu::PinnedVector<amrex::Long> m_row_offset;
     amrex::Gpu::PinnedVector<amrex::Long> m_col_index;
     std::unique_ptr<ResidualWorkspace> m_residual_workspace;
+    mutable std::unique_ptr<AssemblyWorkspace> m_assembly_workspace;
 };
 
 } // namespace fld_test

@@ -25,6 +25,14 @@ relaxed Penrose vertex patch. See
 (default 20). Set it to `0` to skip predictors; negative counts are rejected.
 Set `cloud_flux_limiter=0` for the linear diffusion problem.
 
+For the scaling benchmark, rebuild the preconditioning matrix and AMG
+hierarchy at every Newton step, including when the limiter is disabled.
+This deliberately emulates a nonlinear solve whose operator changes each
+Newton step. Do not reuse the matrix or hierarchy across Newton steps or
+replace this benchmark's Newton workflow with a single linear solve.
+Krylov matrix-vector actions remain matrix-free; matrix assembly is for
+preconditioning. See `scaling/README.md` for the benchmark configuration.
+
 For native AMG setup message counts, add
 `mlabeclap_amg.measure_setup_messages=1`. Each setup prints rank-summed
 point-to-point send calls and payload bytes by AMG level and phase, plus the

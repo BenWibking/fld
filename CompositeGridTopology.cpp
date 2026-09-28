@@ -8,6 +8,8 @@
 #include <AMReX_MFIter.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParallelContext.H>
+#include <AMReX_ParmParse.H>
 
 #include <algorithm>
 #include <limits>
@@ -74,7 +76,162 @@ stage_host (MultiFab& destination, MultiFab const& source, int nghost,
                              periodicity);
 }
 
+void
+verify_face_transfer (
+    Array<MultiFab*, AMREX_SPACEDIM> const& dst,
+    Array<MultiFab const*, AMREX_SPACEDIM> const& src,
+    Periodicity const& periodicity, char const* phase)
+{
+    bool matches = true;
+    for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+        auto reference = make_host_buffer(*dst[direction], 0);
+        stage_host(*reference, *src[direction], 0, periodicity);
+        Gpu::streamSynchronize();
+        for (MFIter mfi(*reference); mfi.isValid(); ++mfi) {
+            auto const& actual = (*dst[direction])[mfi];
+            auto const& expected = (*reference)[mfi];
+            for (BoxIterator bit(mfi.validbox()); bit.ok(); ++bit) {
+                matches = matches && actual(bit(), 0) == expected(bit(), 0);
+            }
+        }
+    }
+    ParallelDescriptor::ReduceBoolAnd(matches);
+    if (!matches) {
+        amrex::Print() << "Packed AMR " << phase
+                       << " face transfer differs from ParallelCopy\n";
+        ParallelDescriptor::Abort(1, false);
+    }
+}
+
 } // namespace
+
+void
+CompositeGridTopology::FaceTransfer::define (
+    Array<MultiFab*, AMREX_SPACEDIM> const& dst,
+    Array<MultiFab const*, AMREX_SPACEDIM> const& src,
+    Periodicity const& periodicity)
+{
+    BL_PROFILE(assembly ? "FLD::assembly::fine_b_plan"
+                        : "FLD::residual::fine_b_plan");
+    AMREX_ALWAYS_ASSERT(!active && local.empty() && sends.empty() && receives.empty());
+    for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+        auto const& cpc = dst[direction]->getCPC(
+            IntVect(0), *src[direction], IntVect(0), periodicity);
+        for (auto const& tag : *cpc.m_LocTags) {
+            local.push_back({direction, tag, 0});
+        }
+        separate_sends += static_cast<Long>(cpc.m_SndTags->size());
+        auto append = [direction] (auto& peers, auto const& tags) {
+            for (auto const& [rank, copies] : tags) {
+                auto& peer = peers[rank];
+                for (auto const& tag : copies) {
+                    std::size_t const offset = peer.data.size();
+                    peer.tags.push_back({direction, tag, offset});
+                    peer.data.resize(offset + static_cast<std::size_t>(tag.sbox.numPts()));
+                }
+            }
+        };
+        append(sends, *cpc.m_SndTags);
+        append(receives, *cpc.m_RcvTags);
+    }
+}
+
+void
+CompositeGridTopology::FaceTransfer::start (
+    Array<MultiFab*, AMREX_SPACEDIM> const& dst,
+    Array<MultiFab const*, AMREX_SPACEDIM> const& src)
+{
+    AMREX_ALWAYS_ASSERT(!active);
+    active = true;
+    // Staged coefficient fields are host-readable even in a GPU build.
+    Gpu::streamSynchronize();
+#ifdef AMREX_USE_MPI
+    int const tag = ParallelDescriptor::SeqNum(); // All ranks, including idle ranks.
+    auto const comm = ParallelContext::CommunicatorSub();
+    receive_requests.clear();
+    send_requests.clear();
+    auto post = [tag, comm] (auto& peers, auto& requests, bool receive) {
+        for (auto& [rank, peer] : peers) {
+            // MPI's count is an int. Ordinary payloads use one message per
+            // peer; exceptionally large payloads are split without padding.
+            for (std::size_t offset = 0; offset < peer.data.size();) {
+                std::size_t const count = std::min(
+                    peer.data.size() - offset,
+                    static_cast<std::size_t>(std::numeric_limits<int>::max()));
+                int const local_rank = ParallelContext::global_to_local_rank(rank);
+                auto message = receive
+                    ? ParallelDescriptor::Arecv(peer.data.data() + offset, count,
+                                                local_rank, tag, comm)
+                    : ParallelDescriptor::Asend(peer.data.data() + offset, count,
+                                                local_rank, tag, comm);
+                requests.push_back(message.req());
+                offset += count;
+            }
+        }
+    };
+    post(receives, receive_requests, true);
+#endif
+    {
+        BL_PROFILE(assembly ? "FLD::assembly::fine_b_pack"
+                            : "FLD::residual::fine_b_pack");
+        for (auto& [rank, peer] : sends) {
+            amrex::ignore_unused(rank);
+            for (auto const& entry : peer.tags) {
+                auto const& tag = entry.copy;
+                (*src[entry.direction])[tag.srcIndex].copyToMem<RunOn::Host>(
+                    tag.sbox, 0, 1, peer.data.data() + entry.offset);
+            }
+        }
+    }
+#ifdef AMREX_USE_MPI
+    post(sends, send_requests, false);
+#endif
+    for (auto const& entry : local) {
+        auto const& tag = entry.copy;
+        (*dst[entry.direction])[tag.dstIndex].copy<RunOn::Host>(
+            (*src[entry.direction])[tag.srcIndex], tag.sbox, 0, tag.dbox, 0, 1);
+    }
+}
+
+void
+CompositeGridTopology::FaceTransfer::finish (
+    Array<MultiFab*, AMREX_SPACEDIM> const& dst)
+{
+    AMREX_ALWAYS_ASSERT(active);
+#ifdef AMREX_USE_MPI
+    {
+        BL_PROFILE(assembly ? "FLD::assembly::fine_b_recv_wait"
+                            : "FLD::residual::fine_b_recv_wait");
+        Vector<MPI_Status> status(receive_requests.size());
+        if (!receive_requests.empty()) {
+            ParallelDescriptor::Waitall(receive_requests, status);
+        }
+    }
+#endif
+    {
+        BL_PROFILE(assembly ? "FLD::assembly::fine_b_unpack"
+                            : "FLD::residual::fine_b_unpack");
+        for (auto const& [rank, peer] : receives) {
+            amrex::ignore_unused(rank);
+            for (auto const& entry : peer.tags) {
+                auto const& tag = entry.copy;
+                (*dst[entry.direction])[tag.dstIndex].copyFromMem<RunOn::Host>(
+                    tag.dbox, 0, 1, peer.data.data() + entry.offset);
+            }
+        }
+    }
+#ifdef AMREX_USE_MPI
+    {
+        BL_PROFILE(assembly ? "FLD::assembly::fine_b_send_wait"
+                            : "FLD::residual::fine_b_send_wait");
+        Vector<MPI_Status> status(send_requests.size());
+        if (!send_requests.empty()) {
+            ParallelDescriptor::Waitall(send_requests, status);
+        }
+    }
+#endif
+    active = false;
+}
 
 CompositeGridTopology::CompositeGridTopology (
     Vector<Geometry> geom, Vector<BoxArray> grids,
@@ -403,18 +560,71 @@ CompositeGridTopology::assemble (
     result.matrix.nnz = static_cast<Long>(m_col_index.size());
     result.boundary_rhs.resize(localRows(), Real(0));
 
-    Vector<Array<std::unique_ptr<MultiFab>, AMREX_SPACEDIM>>
-        fine_b_on_coarse(numLevels() - 1);
+    if (!m_assembly_workspace) {
+        auto workspace = std::make_unique<AssemblyWorkspace>();
+        workspace->fine_b_on_coarse.resize(numLevels() - 1);
+        workspace->fine_b_transfer.resize(numLevels() - 1);
+        ParmParse pp("mlabeclap_amg");
+        pp.query("verify_face_transfers", workspace->verify_face_transfers);
+        bool measure_messages = false;
+        pp.query("measure_assembly_messages", measure_messages);
+        Long counts[3] = {0, 0, 0};
+        for (int level = 0; level + 1 < numLevels(); ++level) {
+            Array<MultiFab*, AMREX_SPACEDIM> dst;
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                BoxArray face_layout = m_refined_coarse[level];
+                face_layout.convert(IntVect::TheDimensionVector(direction));
+                auto& field = workspace->fine_b_on_coarse[level][direction];
+                field = std::make_unique<MultiFab>(
+                    face_layout, m_dmap[level], 1, 0, topology_host_info());
+                dst[direction] = field.get();
+            }
+            auto& transfer = workspace->fine_b_transfer[level];
+            transfer.assembly = true;
+            transfer.define(dst, bcoef[level + 1], m_geom[level + 1].periodicity());
+            counts[0] += transfer.separate_sends;
+            for (auto const& [rank, peer] : transfer.sends) {
+                amrex::ignore_unused(rank);
+                if (!peer.data.empty()) {
+                    counts[1] += static_cast<Long>((peer.data.size() - 1) /
+                        std::numeric_limits<int>::max() + 1);
+                }
+                counts[2] += static_cast<Long>(peer.data.size() * sizeof(Real));
+            }
+        }
+        if (measure_messages) {
+            ParallelDescriptor::ReduceLongSum(counts, 3);
+            amrex::Print() << "FLD assembly face transfers per assembly: separate sends="
+                           << counts[0] << ", packed sends=" << counts[1]
+                           << ", payload bytes=" << counts[2] << '\n';
+        }
+        m_assembly_workspace = std::move(workspace);
+    }
+    auto& workspace = *m_assembly_workspace;
+    auto& fine_b_on_coarse = workspace.fine_b_on_coarse;
     for (int level = 0; level + 1 < numLevels(); ++level) {
+        BL_PROFILE("FLD::assembly::fine_b_start");
+        Array<MultiFab*, AMREX_SPACEDIM> dst;
         for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
-            BoxArray face_layout = m_refined_coarse[level];
-            face_layout.convert(IntVect::TheDimensionVector(direction));
-            fine_b_on_coarse[level][direction] = std::make_unique<MultiFab>(
-                face_layout, m_dmap[level], 1, 0, topology_host_info());
-            fine_b_on_coarse[level][direction]->setVal(Real(0));
-            fine_b_on_coarse[level][direction]->ParallelCopy(
-                *bcoef[level + 1][direction], 0, 0, 1, IntVect(0),
-                IntVect(0), m_geom[level + 1].periodicity());
+            dst[direction] = fine_b_on_coarse[level][direction].get();
+            // Uncovered destination faces must stay zero, including after
+            // repeated assembly with changed coefficient values.
+            dst[direction]->setVal(Real(0));
+        }
+        workspace.fine_b_transfer[level].start(dst, bcoef[level + 1]);
+    }
+    for (int level = 0; level + 1 < numLevels(); ++level) {
+        Array<MultiFab*, AMREX_SPACEDIM> dst;
+        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+            dst[direction] = fine_b_on_coarse[level][direction].get();
+        }
+        {
+            BL_PROFILE("FLD::assembly::fine_b_finish");
+            workspace.fine_b_transfer[level].finish(dst);
+        }
+        if (workspace.verify_face_transfers) {
+            verify_face_transfer(dst, bcoef[level + 1],
+                                 m_geom[level + 1].periodicity(), "assembly");
         }
     }
     Gpu::streamSynchronize();
@@ -542,6 +752,10 @@ CompositeGridTopology::residualWithoutAssembly (
         workspace->fine_state_on_coarse.resize(nlevels - 1);
         workspace->coarse_state_on_fine.resize(nlevels - 1);
         workspace->fine_b_on_coarse.resize(nlevels - 1);
+        workspace->fine_b_transfer.resize(nlevels - 1);
+        ParmParse pp("mlabeclap_amg");
+        pp.query("measure_residual_messages", workspace->measure_residual_messages);
+        pp.query("verify_face_transfers", workspace->verify_face_transfers);
         workspace->result.resize(localRows());
         for (int level = 0; level < nlevels; ++level) {
             workspace->host_state[level] = make_host_buffer(*state[level], 1);
@@ -669,6 +883,34 @@ CompositeGridTopology::residualWithoutAssembly (
     auto const& robin_f_values = boundary.robin_f;
 #endif
 
+    if (!workspace.face_plan_ready) {
+        Long counts[3] = {0, 0, 0};
+        for (int level = 0; level + 1 < nlevels; ++level) {
+            Array<MultiFab*, AMREX_SPACEDIM> dst;
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                dst[direction] = fine_b_on_coarse[level][direction].get();
+            }
+            auto& transfer = workspace.fine_b_transfer[level];
+            transfer.define(dst, bcoef_values[level + 1], m_geom[level + 1].periodicity());
+            counts[0] += transfer.separate_sends;
+            for (auto const& [rank, peer] : transfer.sends) {
+                amrex::ignore_unused(rank);
+                if (!peer.data.empty()) {
+                    counts[1] += static_cast<Long>((peer.data.size() - 1) /
+                        std::numeric_limits<int>::max() + 1);
+                }
+                counts[2] += static_cast<Long>(peer.data.size() * sizeof(Real));
+            }
+        }
+        if (workspace.measure_residual_messages) {
+            ParallelDescriptor::ReduceLongSum(counts, 3);
+            amrex::Print() << "FLD residual face transfers per evaluation: separate sends="
+                           << counts[0] << ", packed sends=" << counts[1]
+                           << ", payload bytes=" << counts[2] << '\n';
+        }
+        workspace.face_plan_ready = true;
+    }
+
     // Start independent coarse/fine transfers before evaluating local rows.
     for (int level = 0; level + 1 < nlevels; ++level) {
         fine_state_on_coarse[level]->setVal(Real(0));
@@ -689,13 +931,14 @@ CompositeGridTopology::residualWithoutAssembly (
 
         for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
             fine_b_on_coarse[level][direction]->setVal(Real(0));
-            {
-                BL_PROFILE("FLD::residual::fine_b_start");
-                fine_b_on_coarse[level][direction]->ParallelCopy_nowait(
-                    *bcoef_values[level + 1][direction], 0, 0, 1,
-                    IntVect(0), IntVect(0),
-                    m_geom[level + 1].periodicity());
+        }
+        {
+            BL_PROFILE("FLD::residual::fine_b_start");
+            Array<MultiFab*, AMREX_SPACEDIM> dst;
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                dst[direction] = fine_b_on_coarse[level][direction].get();
             }
+            workspace.fine_b_transfer[level].start(dst, bcoef_values[level + 1]);
         }
     }
 
@@ -723,9 +966,21 @@ CompositeGridTopology::residualWithoutAssembly (
             BL_PROFILE("FLD::residual::coarse_state_finish");
             coarse_state_on_fine[level]->ParallelCopy_finish();
         }
-        for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+        {
             BL_PROFILE("FLD::residual::fine_b_finish");
-            fine_b_on_coarse[level][direction]->ParallelCopy_finish();
+            Array<MultiFab*, AMREX_SPACEDIM> dst;
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                dst[direction] = fine_b_on_coarse[level][direction].get();
+            }
+            workspace.fine_b_transfer[level].finish(dst);
+        }
+        if (workspace.verify_face_transfers) {
+            Array<MultiFab*, AMREX_SPACEDIM> dst;
+            for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
+                dst[direction] = fine_b_on_coarse[level][direction].get();
+            }
+            verify_face_transfer(dst, bcoef_values[level + 1],
+                                 m_geom[level + 1].periodicity(), "residual");
         }
     }
     Gpu::streamSynchronize();

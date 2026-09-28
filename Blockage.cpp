@@ -605,11 +605,9 @@ class CoupledNewtonProblem
 
     void prepare (State const& state)
     {
-        auto const [minimum_energy, maximum_energy] =
-            composite_minimum_maximum(state.energy, m_masks);
-        auto const [minimum_temperature, maximum_temperature] =
-            composite_minimum_maximum(state.temperature, m_masks);
-        amrex::ignore_unused(minimum_energy, minimum_temperature);
+        Real const maximum_energy = composite_maximum(state.energy, m_masks);
+        Real const maximum_temperature =
+            composite_maximum(state.temperature, m_masks);
         m_energy_scale = amrex::max(maximum_energy, initial_radiation_energy);
         m_temperature_scale = amrex::max(
             maximum_temperature,
@@ -679,6 +677,13 @@ class CoupledNewtonProblem
         copy_coupled_vector(lhs, rhs);
     }
 
+    void copy_state (CoupledVector& destination,
+                     CoupledVector const& source) const
+    {
+        copy_level_data_with_ghosts(destination.energy, source.energy);
+        copy_level_data_with_ghosts(destination.temperature, source.temperature);
+    }
+
     Real dotProduct (CoupledVector const& lhs,
                      CoupledVector const& rhs) const
     {
@@ -705,6 +710,23 @@ class CoupledNewtonProblem
     Real norm2 (CoupledVector const& vector) const
     {
         return std::sqrt(amrex::max(dotProduct(vector, vector), Real(0)));
+    }
+
+    Array<Real, 2> norm2Data (CoupledVector const& vector) const
+    {
+        Real const energy_sum = composite_weighted_dot(
+            vector.energy, vector.energy, m_hierarchy, m_masks);
+        Real const temperature_sum = composite_weighted_dot(
+            vector.temperature, vector.temperature, m_hierarchy, m_masks);
+        return {energy_sum, temperature_sum};
+    }
+
+    Real norm2FromData (Array<Real, 2> const& sums) const
+    {
+        return std::sqrt(amrex::max(
+            sums[0] / (m_energy_scale * m_energy_scale) +
+                sums[1] / (m_temperature_scale * m_temperature_scale),
+            Real(0)));
     }
 
     void scale (CoupledVector& vector, Real factor) const
