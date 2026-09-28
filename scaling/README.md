@@ -141,3 +141,78 @@ sbatch scaling/weak_512.slurm
 ```
 
 Each job writes `%x-%j.out` in the directory from which `sbatch` is invoked.
+
+## GPU suite with matching cells per node
+
+The `weak_gpu_*.slurm` suite uses the same AMR meshes and exactly the same
+**4,390,912 composite cells per node** as the CPU suite. The composite cell
+count is `67 * cloud_fine_n^3 / 256`, from the uncovered coarse cells plus
+the refined strip. No rounding of the resolutions is necessary.
+
+| Script | Nodes | MPI ranks / GPU GCDs | `cloud_fine_n` | Composite cells | Cells/node |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `weak_gpu_001.slurm` | 1 | 8 | 256 | 4,390,912 | 4,390,912 |
+| `weak_gpu_008.slurm` | 8 | 64 | 512 | 35,127,296 | 4,390,912 |
+| `weak_gpu_064.slurm` | 64 | 512 | 1,024 | 281,018,368 | 4,390,912 |
+| `weak_gpu_512.slurm` | 512 | 4,096 | 2,048 | 2,248,146,944 | 4,390,912 |
+
+Each node has eight GPU GCDs exposed as Slurm GPU devices. The scripts use
+eight MPI ranks/node, seven reserved physical CPU cores/rank, one GPU/rank,
+`--gpu-bind=closest`, and one hardware thread/core, following the
+[Frontier launch guidance](https://docs.olcf.ornl.gov/systems/frontier_user_guide.html#mapping-1-gpu-per-task).
+They explicitly specify total ranks in both allocation and launch. Slurm
+provides per-rank GPU visibility; inherited visibility masks are cleared
+before `srun`. `OMP_NUM_THREADS=1` matches this repository's default build
+without OpenMP. Average work is 548,864 composite cells/rank (seven times
+the CPU suite's average), with identical cells/node.
+
+All physics, tolerances, diagnostics, predictor/EW settings, and profiler
+options match the CPU scripts. Preconditioning matrices and AMG hierarchies
+are rebuilt each Newton step. Krylov actions remain matrix-free. The HIP
+build retains the existing host assembly and residual staging paths; GPU
+execution does not imply that every phase runs on the GPU. The different
+MPI decomposition can affect hierarchy structure and iteration counts.
+
+### Build and submit on Frontier
+
+Load the programming environment and a compatible ROCm/Cray MPICH module
+combination, including `craype-accel-amd-gfx90a`, before building. Inherit
+that same environment when submitting. The GPU-aware MPI library
+`libmpi_gtl_hsa.so` must be linked for `MPICH_GPU_SUPPORT_ENABLED=1`, as
+specified by the
+[Frontier GPU-aware MPI documentation](https://docs.olcf.ornl.gov/systems/frontier_user_guide.html#mpich-gpu-support-enabled).
+The checked-in AMReX `Make.olcf` adds the MPI include/link flags and the
+GPU transport library when its ROCm compatibility check passes.
+
+From the repository root:
+
+```sh
+gmake -j8 USE_HIP=TRUE AMD_ARCH=gfx90a \
+    which_site=olcf which_computer=frontier \
+    TINY_PROFILE=TRUE PROFILE=FALSE
+
+sbatch scaling/weak_gpu_001.slurm
+sbatch scaling/weak_gpu_008.slurm
+sbatch scaling/weak_gpu_064.slurm
+sbatch scaling/weak_gpu_512.slurm
+```
+
+The [AMReX GPU build documentation](https://amrex-codes.github.io/amrex/docs_html/GPU.html#building-with-gnu-make)
+describes `USE_HIP=TRUE`. This checkout selects the HIP compiler automatically
+and uses the `.HIP` executable suffix. The scripts default to
+`main3d.hip.${CRAY_CPU_TARGET:-x86-trento}.TPROF.MPI.HIP.ex` in the repository
+root. For a differently named executable, set an absolute override:
+
+```sh
+FLD_GPU_EXECUTABLE=/absolute/path/to/your/hip-executable \
+    sbatch scaling/weak_gpu_001.slurm
+```
+
+GPU scripts can also be submitted from `scaling/`; they resolve the root
+using `SLURM_SUBMIT_DIR`. Logs use `fld-gpu-ws-NNN-JOBID.out`. The allocation
+account, partition, and five-minute limit follow the CPU suite. They enable
+GPU-aware MPI in both Cray MPICH and AMReX.
+
+Local validation covers shell syntax, launch arguments/environment, matching
+solver settings, and exact composite cells/node. HIP compilation, Slurm
+allocation, GPU binding, and convergence still require execution on Frontier.
