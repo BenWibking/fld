@@ -1,0 +1,171 @@
+Initializing AMReX (26.09-218-g8b6ed934facb)...
+MPI initialized with 512 MPI processes
+MPI initialized with thread support level 0
+Initializing HIP...
+HIP initialized with 512 devices.
+AMReX (26.09-218-g8b6ed934facb) initialized
+FLD residual face transfers per evaluation: separate sends=3312, packed sends=2320, payload bytes=6527385600
+The cloud-layer FLD system Newton 0: residual=50341.56308, GMRES rtol=0.5
+FLD assembly face transfers per assembly: separate sends=3312, packed sends=2320, payload bytes=6527385600
+AMG setup messages level=0 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=0 phase=strength-transpose sends=3648 bytes=578178480 collective_rank_calls=512
+AMG setup messages level=0 phase=PMIS sends=75072 bytes=1854389072 collective_rank_calls=5120
+AMG setup messages level=0 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=0 phase=interpolation sends=21888 bytes=774070240 collective_rank_calls=512
+AMG setup messages level=0 phase=interpolation-transpose sends=10162 bytes=253635520 collective_rank_calls=512
+AMG setup messages level=0 phase=A*P sends=11520 bytes=1434858384 collective_rank_calls=512
+AMG setup messages level=0 phase=R*(A*P) sends=30486 bytes=1881619072 collective_rank_calls=512
+AMG setup messages level=1 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=1 phase=strength-transpose sends=11224 bytes=698600048 collective_rank_calls=512
+AMG setup messages level=1 phase=PMIS sends=270416 bytes=1376362508 collective_rank_calls=6144
+AMG setup messages level=1 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=1 phase=interpolation sends=66834 bytes=799540720 collective_rank_calls=512
+AMG setup messages level=1 phase=interpolation-transpose sends=10906 bytes=249779760 collective_rank_calls=512
+AMG setup messages level=1 phase=A*P sends=38052 bytes=1343442448 collective_rank_calls=512
+AMG setup messages level=1 phase=R*(A*P) sends=32718 bytes=3649867328 collective_rank_calls=512
+AMG setup messages level=2 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=2 phase=strength-transpose sends=12701 bytes=313634116 collective_rank_calls=512
+AMG setup messages level=2 phase=PMIS sends=307021 bytes=454733584 collective_rank_calls=6144
+AMG setup messages level=2 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=2 phase=interpolation sends=75126 bytes=309746504 collective_rank_calls=512
+AMG setup messages level=2 phase=interpolation-transpose sends=11034 bytes=72241984 collective_rank_calls=512
+AMG setup messages level=2 phase=A*P sends=43260 bytes=530772992 collective_rank_calls=512
+AMG setup messages level=2 phase=R*(A*P) sends=33102 bytes=1620301856 collective_rank_calls=512
+AMG setup messages level=3 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=3 phase=strength-transpose sends=12978 bytes=81619064 collective_rank_calls=512
+AMG setup messages level=3 phase=PMIS sends=287460 bytes=107366032 collective_rank_calls=5632
+AMG setup messages level=3 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=3 phase=interpolation sends=76791 bytes=81948408 collective_rank_calls=512
+AMG setup messages level=3 phase=interpolation-transpose sends=10399 bytes=17409648 collective_rank_calls=512
+AMG setup messages level=3 phase=A*P sends=43536 bytes=156562144 collective_rank_calls=512
+AMG setup messages level=3 phase=R*(A*P) sends=31197 bytes=460132448 collective_rank_calls=512
+AMG setup messages level=4 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=4 phase=strength-transpose sends=12958 bytes=17310844 collective_rank_calls=512
+AMG setup messages level=4 phase=PMIS sends=287596 bytes=27126240 collective_rank_calls=5632
+AMG setup messages level=4 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=4 phase=interpolation sends=76539 bytes=20081392 collective_rank_calls=512
+AMG setup messages level=4 phase=interpolation-transpose sends=8796 bytes=4045776 collective_rank_calls=512
+AMG setup messages level=4 phase=A*P sends=54516 bytes=49217696 collective_rank_calls=512
+AMG setup messages level=4 phase=R*(A*P) sends=26388 bytes=112669344 collective_rank_calls=512
+AMG setup messages level=5 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=5 phase=strength-transpose sends=13438 bytes=3385796 collective_rank_calls=512
+AMG setup messages level=5 phase=PMIS sends=281498 bytes=6878848 collective_rank_calls=5120
+AMG setup messages level=5 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=5 phase=interpolation sends=75726 bytes=4619168 collective_rank_calls=512
+AMG setup messages level=5 phase=interpolation-transpose sends=6210 bytes=1049904 collective_rank_calls=512
+AMG setup messages level=5 phase=A*P sends=96024 bytes=19057968 collective_rank_calls=512
+AMG setup messages level=5 phase=R*(A*P) sends=18630 bytes=25981216 collective_rank_calls=512
+AMG setup messages level=6 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=6 phase=strength-transpose sends=8274 bytes=655632 collective_rank_calls=512
+AMG setup messages level=6 phase=PMIS sends=170852 bytes=1638912 collective_rank_calls=4608
+AMG setup messages level=6 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=6 phase=interpolation sends=43776 bytes=808988 collective_rank_calls=512
+AMG setup messages level=6 phase=interpolation-transpose sends=2888 bytes=276624 collective_rank_calls=512
+AMG setup messages level=6 phase=A*P sends=111078 bytes=6927008 collective_rank_calls=512
+AMG setup messages level=6 phase=R*(A*P) sends=8664 bytes=4942336 collective_rank_calls=512
+AMG setup messages level=7 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=7 phase=strength-transpose sends=2058 bytes=131572 collective_rank_calls=512
+AMG setup messages level=7 phase=PMIS sends=29940 bytes=252752 collective_rank_calls=2560
+AMG setup messages level=7 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=7 phase=interpolation sends=9963 bytes=120668 collective_rank_calls=512
+AMG setup messages level=7 phase=interpolation-transpose sends=969 bytes=79008 collective_rank_calls=512
+AMG setup messages level=7 phase=A*P sends=40320 bytes=1713920 collective_rank_calls=512
+AMG setup messages level=7 phase=R*(A*P) sends=2907 bytes=718368 collective_rank_calls=512
+AMG setup messages level=8 phase=strength sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=8 phase=strength-transpose sends=551 bytes=40308 collective_rank_calls=512
+AMG setup messages level=8 phase=PMIS sends=3779 bytes=50412 collective_rank_calls=1024
+AMG setup messages level=8 phase=numbering sends=0 bytes=0 collective_rank_calls=512
+AMG setup messages level=8 phase=interpolation sends=2862 bytes=23988 collective_rank_calls=512
+AMG setup messages level=8 phase=interpolation-transpose sends=143 bytes=12464 collective_rank_calls=512
+AMG setup messages level=8 phase=A*P sends=5034 bytes=118080 collective_rank_calls=512
+AMG setup messages level=8 phase=R*(A*P) sends=429 bytes=15776 collective_rank_calls=512
+GMRES: iter = 0, residual = 13448.9331, 1 (rel.)
+GMRES: iter = 1, residual = 3662.745551, 0.2723446925 (rel.)
+GMRES: Solve Time = 0.585111344
+The cloud-layer FLD system Newton 1: residual=3662.745538, GMRES rtol=0.225
+(GTL DEBUG: 179) hsa_agent_get_info returned error 4100 exiting 1793
+main3d.hip.x86-trento.TPROF.MPI.HIP.ex: gtlt_hsa_ops.c:1798: gtlt_hsa_pointer_type: Assertion `0' failed.
+SIGABRT
+See Backtrace.179 file for details
+MPICH ERROR [Rank 179] [job id 5571089.0] [Tue Sep 29 21:50:24 2026] [frontier03287] - Abort(6) (rank 179 in comm 0): application called MPI_Abort(MPI_COMM_WORLD, 6) - process 179
+
+aborting job:
+application called MPI_Abort(MPI_COMM_WORLD, 6) - process 179
+srun: error: frontier03287: task 179: Exited with exit code 255
+srun: Terminating StepId=5571089.0
+[2026-09-29T21:50:25.179] error: *** STEP 5571089.0 ON frontier00124 CANCELLED AT 2026-09-29T21:50:25 DUE TO TASK FAILURE ***
+srun: error: frontier00990: task 57: Terminated
+srun: error: frontier06041: task 336: Terminated
+srun: error: frontier06486: task 363: Terminated
+srun: error: frontier01498: task 75: Terminated
+srun: error: frontier02032: tasks 104,108,111: Terminated
+srun: error: frontier06261: tasks 344-345,348,351: Terminated
+srun: error: frontier01755: tasks 88,92: Terminated
+srun: error: frontier05124: tasks 280-281: Terminated
+srun: error: frontier01909: tasks 96-100,102-103: Terminated
+srun: error: frontier08465: tasks 488-495: Terminated
+srun: error: frontier01909: task 101: Terminated
+srun: error: frontier05747: tasks 312-314,316-319: Terminated
+srun: error: frontier05747: task 315: Terminated
+srun: error: frontier00603: tasks 32-39: Terminated
+srun: error: frontier02545: tasks 136-143: Terminated
+srun: error: frontier03178: tasks 168-175: Terminated
+srun: error: frontier08684: tasks 496-503: Terminated
+srun: error: frontier03799: tasks 200-207: Terminated
+srun: error: frontier02168: tasks 112-119: Terminated
+srun: error: frontier06367: tasks 352-359: Terminated
+srun: error: frontier02808: tasks 144-151: Terminated
+srun: error: frontier00353: tasks 16-23: Terminated
+srun: error: frontier04945: tasks 264-271: Terminated
+srun: error: frontier05070: tasks 272-279: Terminated
+srun: error: frontier01627: tasks 80-87: Terminated
+srun: error: frontier03541: tasks 192-199: Terminated
+srun: error: frontier05861: tasks 320-327: Terminated
+srun: error: frontier03935: tasks 208-215: Terminated
+srun: error: frontier04837: tasks 256-263: Terminated
+srun: error: frontier04715: tasks 248-255: Terminated
+srun: error: frontier08422: tasks 480-487: Terminated
+srun: error: frontier07258: tasks 408-415: Terminated
+srun: error: frontier08101: tasks 464-471: Terminated
+srun: error: frontier03047: tasks 160-167: Terminated
+srun: error: frontier08916: tasks 504-511: Terminated
+srun: error: frontier04471: tasks 232-239: Terminated
+srun: error: frontier06886: tasks 384-391: Terminated
+srun: error: frontier07504: tasks 424-431: Terminated
+srun: error: frontier07653: tasks 432-439: Terminated
+srun: error: frontier06753: tasks 376-383: Terminated
+srun: error: frontier00877: tasks 48-55: Terminated
+srun: error: frontier08055: tasks 456-463: Terminated
+srun: error: frontier06637: tasks 368-375: Terminated
+srun: error: frontier02400: tasks 128-135: Terminated
+srun: error: frontier05356: tasks 288-295: Terminated
+srun: error: frontier08305: tasks 472-479: Terminated
+srun: error: frontier07377: tasks 416-423: Terminated
+srun: error: frontier02290: tasks 120-127: Terminated
+srun: error: frontier05453: tasks 296-303: Terminated
+srun: error: frontier03424: tasks 184-191: Terminated
+srun: error: frontier06998: tasks 392-399: Terminated
+srun: error: frontier05997: tasks 328-335: Terminated
+srun: error: frontier07762: tasks 440-447: Terminated
+srun: error: frontier02938: tasks 152-159: Terminated
+srun: error: frontier07120: tasks 400-407: Terminated
+srun: error: frontier07819: tasks 448-455: Terminated
+srun: error: frontier00477: tasks 24-31: Terminated
+srun: error: frontier00253: tasks 8-15: Terminated
+srun: error: frontier04561: tasks 240-247: Terminated
+srun: error: frontier00765: tasks 40-47: Terminated
+srun: error: frontier01375: tasks 64-71: Terminated
+srun: error: frontier04303: tasks 224-231: Terminated
+srun: error: frontier05560: tasks 304-311: Terminated
+srun: error: frontier04051: tasks 216-223: Terminated
+srun: error: frontier00124: tasks 0-7: Terminated
+srun: error: frontier06486: tasks 360-362,364-367: Terminated
+srun: error: frontier01498: tasks 72-74,76-79: Terminated
+srun: error: frontier06261: tasks 346-347,349-350: Terminated
+srun: error: frontier02032: tasks 105-107,109-110: Terminated
+srun: error: frontier06041: tasks 337-343: Terminated
+srun: error: frontier01755: tasks 89-91,93-95: Terminated
+srun: error: frontier00990: tasks 56,58-63: Terminated
+srun: error: frontier05124: tasks 282-287: Terminated
+srun: error: frontier03287: tasks 176-178,180-183: Terminated
+srun: Force Terminated StepId=5571089.0
