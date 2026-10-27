@@ -16,6 +16,7 @@ struct SolverSummary
     std::string outer_solver;
     std::string preconditioner;
     std::string amg_backend;
+    int setups = 0;
     int solves = 0;
     int total_iterations = 0;
     int maximum_iterations = 0;
@@ -70,6 +71,10 @@ struct ICASE2001Result
     int maximum_nonlinear_iterations = 0;
     int total_newton_krylov_iterations = 0;
     int maximum_newton_krylov_iterations = 0;
+    // Nonlinear elimination only: cell-local temperature solves.
+    int maximum_local_newton_iterations = 0;
+    amrex::Long total_local_solves = 0;
+    std::string nonlinear_solver;
     amrex::Long cells = 0;
     amrex::Long high_z_cells = 0;
     SolverSummary solver;

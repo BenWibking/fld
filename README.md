@@ -57,7 +57,8 @@ from Section 4 of `papers/icase-2001-12.pdf` to the unit cube. The high-opacity
 rectangular prism spans the middle third of x and y and the middle two-thirds
 of z. Radiation enters through the x-low Robin face and leaves through the
 x-high Robin face; the y and z faces are insulated. The solver uses
-cell-centered finite volumes and a block nonlinear iteration.
+cell-centered finite volumes. Unlike the paper, the material equation has no
+heat conduction, so it is local to each cell.
 
 The default resolution is 24 cells per side. `icase_n_cell` must be divisible
 by 6 to align the material interfaces with cell faces. The defaults
@@ -68,3 +69,12 @@ short run:
 mpirun -np 2 ./main3d.gnu.MPI.ex icase_only=1 icase_n_cell=24 \
   icase_steps=2 icase_iteration_output=0 icase_write_plotfile=0
 ```
+
+`icase_solver` selects the nonlinear solver. `ne_newton_krylov` (default) and
+`ne_quasi_newton` use nonlinear elimination (Brunner, Haut & Nowak 2020,
+`papers/`): T is solved cell by cell for the current E, leaving a system in E
+alone. `ne_newton_krylov` applies Jacobian-free Newton-Krylov to that reduced
+system; `ne_quasi_newton` is the paper's Algorithm 2 with frozen
+coefficients. `newton_krylov` is Jacobian-free Newton-Krylov on the coupled
+(E, T) system. See
+`benchmarks/2026-10-27-nonlinear-elimination/RESULTS.md`.

@@ -20,7 +20,6 @@ namespace
 {
 
 Real constexpr initial_radiation_energy = Real(1.e-5);
-Real constexpr material_conductivity = Real(0.005);
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 positive_temperature (Real temperature) noexcept
@@ -76,7 +75,7 @@ void
 update_absorption_and_cell_diffusion (
     DiffusionHierarchy const& hierarchy, LevelData& energy,
     LevelData& temperature, LevelData& atomic_number, LevelData& sigma,
-    LevelData& radiation_diffusion, LevelData& material_diffusion)
+    LevelData& radiation_diffusion)
 {
     fill_level_ghosts(energy, hierarchy);
     fill_level_ghosts(temperature, hierarchy);
@@ -92,7 +91,6 @@ update_absorption_and_cell_diffusion (
             auto const z = atomic_number[level]->const_array(mfi);
             auto const absorption = sigma[level]->array(mfi);
             auto const dr = radiation_diffusion[level]->array(mfi);
-            auto const dt = material_diffusion[level]->array(mfi);
             ParallelFor(mfi.validbox(),
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
             {
@@ -119,9 +117,6 @@ update_absorption_and_cell_diffusion (
                 absorption(i, j, k) = sigma_value;
                 dr(i, j, k) = Real(1) /
                             (Real(3) * sigma_value + limiter_term);
-                dt(i, j, k) = material_conductivity *
-                            temperature_value * temperature_value *
-                            std::sqrt(temperature_value);
             });
         }
     }
@@ -131,7 +126,7 @@ void
 fill_paper_face_coefficients (
     DiffusionHierarchy const& hierarchy, LevelData& energy,
     LevelData& temperature, LevelData& atomic_number,
-    FaceData& radiation_bcoef, FaceData& material_bcoef)
+    FaceData& radiation_bcoef)
 {
     fill_level_ghosts(energy, hierarchy);
     fill_level_ghosts(temperature, hierarchy);
@@ -143,13 +138,11 @@ fill_paper_face_coefficients (
         auto const dx = hierarchy.geom[level].CellSizeArray();
         for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
             MultiFab& radiation_face = *radiation_bcoef[level][direction];
-            MultiFab& material_face = *material_bcoef[level][direction];
             for (MFIter mfi(radiation_face); mfi.isValid(); ++mfi) {
                 auto const e = energy[level]->const_array(mfi);
                 auto const t = temperature[level]->const_array(mfi);
                 auto const z = atomic_number[level]->const_array(mfi);
                 auto const dr = radiation_face.array(mfi);
-                auto const dt = material_face.array(mfi);
                 ParallelFor(mfi.validbox(),
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
@@ -204,9 +197,6 @@ fill_paper_face_coefficients (
                     Real const dright = Real(1) /
                         (Real(3) * sigma_right + limiter_term);
                     dr(i,j,k) = Real(2) * dl * dright / (dl + dright);
-                    dt(i,j,k) = material_conductivity *
-                        face_temperature * face_temperature *
-                        std::sqrt(face_temperature);
                 });
             }
         }
@@ -419,17 +409,16 @@ fill_coupled_residual (
     CoupledVector const& state, LevelData const& old_energy,
     LevelData const& old_temperature, LevelData& atomic_number, Real dt,
     CoupledVector& residual, LevelData& sigma,
-    LevelData& radiation_diffusion, LevelData& material_diffusion,
-    FaceData& radiation_bcoef, FaceData& material_bcoef)
+    LevelData& radiation_diffusion, FaceData& radiation_bcoef)
 {
     AMREX_ALWAYS_ASSERT(hierarchy.geom.size() == 1);
     CoupledVector work = clone_coupled_vector(state);
     update_absorption_and_cell_diffusion(
         hierarchy, work.energy, work.temperature, atomic_number, sigma,
-        radiation_diffusion, material_diffusion);
+        radiation_diffusion);
     fill_paper_face_coefficients(
         hierarchy, work.energy, work.temperature, atomic_number,
-        radiation_bcoef, material_bcoef);
+        radiation_bcoef);
 
     Geometry const& geometry = hierarchy.geom[0];
     Box const domain = geometry.Domain();
@@ -447,10 +436,7 @@ fill_coupled_residual (
         auto const absorption = sigma[0]->const_array(mfi);
         auto const drx = radiation_bcoef[0][0]->const_array(mfi);
         auto const dry = radiation_bcoef[0][1]->const_array(mfi);
-        auto const dtx = material_bcoef[0][0]->const_array(mfi);
-        auto const dty = material_bcoef[0][1]->const_array(mfi);
         auto const drz = radiation_bcoef[0][2]->const_array(mfi);
-        auto const dtz = material_bcoef[0][2]->const_array(mfi);
         auto const re = residual.energy[0]->array(mfi);
         auto const rt = residual.temperature[0]->array(mfi);
         auto const active = mask.const_array(mfi);
@@ -466,13 +452,10 @@ fill_coupled_residual (
             Real const t4 = temperature_value * cube(temperature_value);
             Real const exchange = absorption(i,j,k) * (e(i,j,k) - t4);
             Real radiation = inverse_dt * (e(i,j,k) - eo(i,j,k)) + exchange;
-            Real material = inverse_dt * (t(i,j,k) - to(i,j,k)) - exchange;
 
             if (i > dlo.x) {
                 radiation += drx(i,j,k) * (e(i,j,k) - e(i-1,j,k)) /
                              (dx[0] * dx[0]);
-                material += dtx(i,j,k) * (t(i,j,k) - t(i-1,j,k)) /
-                            (dx[0] * dx[0]);
             } else {
                 Real const aa = Real(0.25);
                 Real const bb = Real(1) / (Real(6) * absorption(i,j,k));
@@ -482,8 +465,6 @@ fill_coupled_residual (
             if (i < dhi.x) {
                 radiation += drx(i+1,j,k) * (e(i,j,k) - e(i+1,j,k)) /
                              (dx[0] * dx[0]);
-                material += dtx(i+1,j,k) * (t(i,j,k) - t(i+1,j,k)) /
-                            (dx[0] * dx[0]);
             } else {
                 Real const aa = Real(0.25);
                 Real const bb = Real(1) / (Real(6) * absorption(i,j,k));
@@ -493,29 +474,21 @@ fill_coupled_residual (
             if (j > dlo.y) {
                 radiation += dry(i,j,k) * (e(i,j,k) - e(i,j-1,k)) /
                              (dx[1] * dx[1]);
-                material += dty(i,j,k) * (t(i,j,k) - t(i,j-1,k)) /
-                            (dx[1] * dx[1]);
             }
             if (j < dhi.y) {
                 radiation += dry(i,j+1,k) * (e(i,j,k) - e(i,j+1,k)) /
                              (dx[1] * dx[1]);
-                material += dty(i,j+1,k) * (t(i,j,k) - t(i,j+1,k)) /
-                            (dx[1] * dx[1]);
             }
             if (k > dlo.z) {
                 radiation += drz(i,j,k) * (e(i,j,k) - e(i,j,k-1)) /
                              (dx[2] * dx[2]);
-                material += dtz(i,j,k) * (t(i,j,k) - t(i,j,k-1)) /
-                            (dx[2] * dx[2]);
             }
             if (k < dhi.z) {
                 radiation += drz(i,j,k+1) * (e(i,j,k) - e(i,j,k+1)) /
                              (dx[2] * dx[2]);
-                material += dtz(i,j,k+1) * (t(i,j,k) - t(i,j,k+1)) /
-                            (dx[2] * dx[2]);
             }
             re(i,j,k) = radiation;
-            rt(i,j,k) = material;
+            rt(i,j,k) = inverse_dt * (t(i,j,k) - to(i,j,k)) - exchange;
         });
     }
 }
@@ -566,6 +539,26 @@ add_exchange_coupling (LevelData& temperature_rhs,
     }
 }
 
+// The material equation is cell-local, so its linearized block is diagonal
+// and is solved exactly: solution = rhs / diagonal.
+void
+solve_diagonal (LevelData& solution, LevelData const& rhs,
+                LevelData const& diagonal)
+{
+    for (int level = 0; level < static_cast<int>(rhs.size()); ++level) {
+        for (MFIter mfi(*rhs[level]); mfi.isValid(); ++mfi) {
+            auto const x = solution[level]->array(mfi);
+            auto const b = rhs[level]->const_array(mfi);
+            auto const d = diagonal[level]->const_array(mfi);
+            ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                x(i,j,k) = b(i,j,k) / d(i,j,k);
+            });
+        }
+    }
+}
+
 class CoupledNewtonProblem
 {
   public:
@@ -576,31 +569,24 @@ class CoupledNewtonProblem
         DiffusionHierarchy const& hierarchy, Vector<iMultiFab> const& masks,
         LevelData const& old_energy, LevelData const& old_temperature,
         LevelData& atomic_number, LevelData& sigma, Real dt,
-        MLABecLapAMG& radiation_solver, MLABecLapAMG& material_solver,
-        SolverSummary& summary, LevelData& energy_acoef,
-        LevelData& temperature_acoef, FaceData& radiation_bcoef,
-        FaceData& material_bcoef, LevelData& robin_a, LevelData& robin_b,
+        MLABecLapAMG& radiation_solver, SolverSummary& summary,
+        LevelData& energy_acoef, LevelData& temperature_acoef,
+        FaceData& radiation_bcoef, LevelData& robin_a, LevelData& robin_b,
         LevelData& robin_f,
         Array<LinOpBCType, AMREX_SPACEDIM> radiation_lo,
-        Array<LinOpBCType, AMREX_SPACEDIM> radiation_hi,
-        Array<LinOpBCType, AMREX_SPACEDIM> insulated)
+        Array<LinOpBCType, AMREX_SPACEDIM> radiation_hi)
         : m_hierarchy(hierarchy), m_masks(masks), m_old_energy(old_energy),
           m_old_temperature(old_temperature), m_atomic_number(atomic_number),
           m_sigma(sigma), m_dt(dt),
-          m_radiation_solver(radiation_solver),
-          m_material_solver(material_solver), m_summary(summary),
+          m_radiation_solver(radiation_solver), m_summary(summary),
           m_energy_acoef(energy_acoef),
           m_temperature_acoef(temperature_acoef),
-          m_radiation_bcoef(radiation_bcoef),
-          m_material_bcoef(material_bcoef), m_robin_a(robin_a),
+          m_radiation_bcoef(radiation_bcoef), m_robin_a(robin_a),
           m_robin_b(robin_b), m_robin_f(robin_f),
           m_radiation_lo(radiation_lo), m_radiation_hi(radiation_hi),
-          m_insulated(insulated),
           m_trial_sigma(make_cell_data(hierarchy, 1, 1)),
           m_trial_radiation_diffusion(make_cell_data(hierarchy, 1, 1)),
-          m_trial_material_diffusion(make_cell_data(hierarchy, 1, 1)),
-          m_trial_radiation_bcoef(make_face_data(hierarchy)),
-          m_trial_material_bcoef(make_face_data(hierarchy))
+          m_trial_radiation_bcoef(make_face_data(hierarchy))
     {}
 
     void prepare (State const& state)
@@ -625,11 +611,6 @@ class CoupledNewtonProblem
             get_face_const_ptrs(m_radiation_bcoef), m_radiation_lo,
             m_radiation_hi, {}, robin);
         record_setup(m_summary, m_radiation_solver);
-        m_material_solver.setup(
-            Real(1), Real(1), get_level_const_ptrs(m_temperature_acoef),
-            get_face_const_ptrs(m_material_bcoef), m_insulated, m_insulated,
-            {});
-        record_setup(m_summary, m_material_solver);
     }
 
     void residual (State const& state, State& output)
@@ -637,8 +618,7 @@ class CoupledNewtonProblem
         fill_coupled_residual(
             m_hierarchy, m_masks, state, m_old_energy, m_old_temperature,
             m_atomic_number, m_dt, output, m_sigma,
-            m_trial_radiation_diffusion, m_trial_material_diffusion,
-            m_radiation_bcoef, m_material_bcoef);
+            m_trial_radiation_diffusion, m_radiation_bcoef);
     }
 
     void linearized_residual (State const& state, State& output)
@@ -646,8 +626,7 @@ class CoupledNewtonProblem
         fill_coupled_residual(
             m_hierarchy, m_masks, state, m_old_energy, m_old_temperature,
             m_atomic_number, m_dt, output, m_trial_sigma,
-            m_trial_radiation_diffusion, m_trial_material_diffusion,
-            m_trial_radiation_bcoef, m_trial_material_bcoef);
+            m_trial_radiation_diffusion, m_trial_radiation_bcoef);
     }
 
     CoupledVector makeVecRHS () const
@@ -667,9 +646,8 @@ class CoupledNewtonProblem
             get_level_ptrs(output.energy), get_level_const_ptrs(rhs.energy));
         LevelData temperature_rhs = clone_level_data(rhs.temperature);
         add_exchange_coupling(temperature_rhs, output.energy, m_sigma);
-        m_material_solver.precondition(
-            get_level_ptrs(output.temperature),
-            get_level_const_ptrs(temperature_rhs));
+        solve_diagonal(output.temperature, temperature_rhs,
+                       m_temperature_acoef);
     }
 
     void assign (CoupledVector& lhs, CoupledVector const& rhs) const
@@ -776,26 +754,391 @@ class CoupledNewtonProblem
     LevelData& m_sigma;
     Real m_dt;
     MLABecLapAMG& m_radiation_solver;
-    MLABecLapAMG& m_material_solver;
     SolverSummary& m_summary;
     LevelData& m_energy_acoef;
     LevelData& m_temperature_acoef;
     FaceData& m_radiation_bcoef;
-    FaceData& m_material_bcoef;
     LevelData& m_robin_a;
     LevelData& m_robin_b;
     LevelData& m_robin_f;
     Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_lo;
     Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_hi;
-    Array<LinOpBCType, AMREX_SPACEDIM> m_insulated;
     LevelData m_trial_sigma;
     LevelData m_trial_radiation_diffusion;
-    LevelData m_trial_material_diffusion;
     FaceData m_trial_radiation_bcoef;
-    FaceData m_trial_material_bcoef;
     Real m_energy_scale = Real(1);
     Real m_temperature_scale = Real(1);
 };
+
+// Nonlinear elimination (Brunner, Haut & Nowak 2020).  Without material
+// conduction the material equation
+//     g(T) = (T - T_old)/dt - sigma(T) (E - T^4) = 0,  sigma = Z^3/T^3,
+// involves only the cell's own E, so T(E) is found cell by cell and the
+// radiation equation becomes a system in E alone.  g is increasing and
+// concave in T, so Newton approaches the root from below after at most one
+// step from above; steps are limited to halving T.  Returns the largest
+// number of Newton iterations taken by any cell.
+int
+solve_cell_temperatures (LevelData const& energy,
+                         LevelData const& old_temperature,
+                         LevelData const& atomic_number, Real dt,
+                         LevelData& temperature,
+                         LevelData* temperature_derivative)
+{
+    BL_PROFILE("FLD::icase_cell_temperature_solve");
+    int constexpr maximum_iterations = 50;
+    Real const inverse_dt = Real(1) / dt;
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<int> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(energy.size()); ++level) {
+        for (MFIter mfi(*energy[level]); mfi.isValid(); ++mfi) {
+            auto const e = energy[level]->const_array(mfi);
+            auto const to = old_temperature[level]->const_array(mfi);
+            auto const z = atomic_number[level]->const_array(mfi);
+            auto const t = temperature[level]->array(mfi);
+            bool const want_derivative = temperature_derivative != nullptr;
+            auto const tau = want_derivative
+                ? (*temperature_derivative)[level]->array(mfi)
+                : Array4<Real>{};
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                Real const z3 = cube(z(i,j,k));
+                // Finite-difference Jacobian probes can make E negative in
+                // cold cells, where g may have no positive root.  With
+                // E >= 0, g(0+) < 0 and the root exists.
+                Real const ev = amrex::max(e(i,j,k), Real(0));
+                Real tv = positive_temperature(t(i,j,k));
+                int iterations = 0;
+                bool converged = false;
+                while (!converged && iterations < maximum_iterations) {
+                    Real const t3 = cube(tv);
+                    Real const g = inverse_dt * (tv - to(i,j,k)) -
+                                   z3 * (ev / t3 - tv);
+                    Real const slope = inverse_dt +
+                        z3 * (Real(3) * ev / (t3 * tv) + Real(1));
+                    Real const next = amrex::max(tv - g / slope,
+                                                 Real(0.5) * tv);
+                    converged = std::abs(next - tv) <= Real(1.e-13) * next;
+                    tv = next;
+                    ++iterations;
+                }
+                t(i,j,k) = tv;
+                if (want_derivative) {
+                    // dT/dE = -g_E / g_T with g_E = -Z^3/T^3.
+                    Real const t3 = cube(tv);
+                    Real const slope = inverse_dt +
+                        z3 * (Real(3) * ev / (t3 * tv) + Real(1));
+                    tau(i,j,k) = z3 / (t3 * slope);
+                }
+                return {converged ? iterations : maximum_iterations + 1};
+            });
+        }
+    }
+    int result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceIntMax(result);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        result <= maximum_iterations,
+        "ICASE cell-local temperature Newton solve did not converge");
+    return result;
+}
+
+// The radiation equation with the material temperature eliminated:
+//     R(E) = (E - E_old + T(E) - T_old)/dt + L(E; T(E)),
+// the total-energy form, where L is the flux-limited radiation diffusion
+// with Marshak boundaries.  Its Jacobian, with the diffusion coefficients
+// frozen, is (1 + dT/dE)/dt - div D grad: the Fleck-factor operator.
+class ReducedNewtonProblem
+{
+  public:
+    using State = LevelData;
+    using RT = Real;
+
+    ReducedNewtonProblem (
+        DiffusionHierarchy const& hierarchy, Vector<iMultiFab> const& masks,
+        LevelData const& old_energy, LevelData const& old_temperature,
+        LevelData& atomic_number, Real dt, MLABecLapAMG& radiation_solver,
+        SolverSummary& summary,
+        Array<LinOpBCType, AMREX_SPACEDIM> radiation_lo,
+        Array<LinOpBCType, AMREX_SPACEDIM> radiation_hi)
+        : m_hierarchy(hierarchy), m_masks(masks), m_old_energy(old_energy),
+          m_old_temperature(old_temperature),
+          m_atomic_number(atomic_number), m_dt(dt),
+          m_radiation_solver(radiation_solver), m_summary(summary),
+          m_radiation_lo(radiation_lo), m_radiation_hi(radiation_hi),
+          m_coupled(make_coupled_vector(hierarchy, 1)),
+          m_residual(make_coupled_vector(hierarchy, 0)),
+          m_temperature_derivative(make_cell_data(hierarchy, 1, 0)),
+          m_sigma(make_cell_data(hierarchy, 1, 1)),
+          m_radiation_diffusion(make_cell_data(hierarchy, 1, 1)),
+          m_energy_acoef(make_cell_data(hierarchy, 1, 0)),
+          m_radiation_bcoef(make_face_data(hierarchy)),
+          m_robin_a(make_cell_data(hierarchy, 1, 0)),
+          m_robin_b(make_cell_data(hierarchy, 1, 0)),
+          m_robin_f(make_cell_data(hierarchy, 1, 0))
+    {
+        // Warm start for the first cell-local solves.
+        copy_level_data(m_coupled.temperature, old_temperature);
+    }
+
+    // Set T = T(E) cell by cell, optionally with dT/dE.
+    void eliminate (State const& energy, bool with_derivative)
+    {
+        copy_level_data(m_coupled.energy, energy);
+        int const iterations = solve_cell_temperatures(
+            m_coupled.energy, m_old_temperature, m_atomic_number, m_dt,
+            m_coupled.temperature,
+            with_derivative ? &m_temperature_derivative : nullptr);
+        m_maximum_local_iterations =
+            amrex::max(m_maximum_local_iterations, iterations);
+        ++m_local_solves;
+    }
+
+    void prepare (State const& energy)
+    {
+        BL_PROFILE("FLD::icase_reduced_prepare");
+        m_energy_scale = amrex::max(composite_maximum(energy, m_masks),
+                                    initial_radiation_energy);
+        eliminate(energy, true);
+        update_absorption_and_cell_diffusion(
+            m_hierarchy, m_coupled.energy, m_coupled.temperature,
+            m_atomic_number, m_sigma, m_radiation_diffusion);
+        fill_paper_face_coefficients(
+            m_hierarchy, m_coupled.energy, m_coupled.temperature,
+            m_atomic_number, m_radiation_bcoef);
+        fill_radiation_robin_data(m_hierarchy, m_sigma, m_robin_a, m_robin_b,
+                                  m_robin_f);
+        Real const inverse_dt = Real(1) / m_dt;
+        for (int level = 0; level < static_cast<int>(m_sigma.size()); ++level) {
+            for (MFIter mfi(*m_energy_acoef[level]); mfi.isValid(); ++mfi) {
+                auto const tau = m_temperature_derivative[level]->const_array(mfi);
+                auto const acoef = m_energy_acoef[level]->array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    acoef(i,j,k) = inverse_dt * (Real(1) + tau(i,j,k));
+                });
+            }
+        }
+        RobinBCData robin{get_level_const_ptrs(m_robin_a),
+                          get_level_const_ptrs(m_robin_b),
+                          get_level_const_ptrs(m_robin_f)};
+        m_radiation_solver.setup(
+            Real(1), Real(1), get_level_const_ptrs(m_energy_acoef),
+            get_face_const_ptrs(m_radiation_bcoef), m_radiation_lo,
+            m_radiation_hi, {}, robin);
+        record_setup(m_summary, m_radiation_solver);
+    }
+
+    void residual (State const& energy, State& output)
+    {
+        eliminate(energy, false);
+        fill_coupled_residual(
+            m_hierarchy, m_masks, m_coupled, m_old_energy, m_old_temperature,
+            m_atomic_number, m_dt, m_residual, m_sigma,
+            m_radiation_diffusion, m_radiation_bcoef);
+        // The material residual is zero to roundoff; adding it gives the
+        // total-energy form.
+        lincomb_level_data(output, Real(1), m_residual.energy, Real(1),
+                           m_residual.temperature);
+    }
+
+    void linearized_residual (State const& energy, State& output)
+    {
+        residual(energy, output);
+    }
+
+    // Right-hand side of the linearized system solved by one quasi-Newton
+    // iteration about the state passed to the last prepare():
+    //     E_old/dt + (T_old - T + (dT/dE) E)/dt.
+    void quasi_newton_rhs (State& rhs) const
+    {
+        Real const inverse_dt = Real(1) / m_dt;
+        for (int level = 0; level < static_cast<int>(rhs.size()); ++level) {
+            for (MFIter mfi(*rhs[level]); mfi.isValid(); ++mfi) {
+                auto const eo = m_old_energy[level]->const_array(mfi);
+                auto const to = m_old_temperature[level]->const_array(mfi);
+                auto const e = m_coupled.energy[level]->const_array(mfi);
+                auto const t = m_coupled.temperature[level]->const_array(mfi);
+                auto const tau =
+                    m_temperature_derivative[level]->const_array(mfi);
+                auto const f = rhs[level]->array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    f(i,j,k) = inverse_dt * (eo(i,j,k) + to(i,j,k) -
+                                             t(i,j,k) +
+                                             tau(i,j,k) * e(i,j,k));
+                });
+            }
+        }
+    }
+
+    [[nodiscard]] LevelData const& temperature () const
+    {
+        return m_coupled.temperature;
+    }
+    [[nodiscard]] int maximum_local_iterations () const
+    {
+        return m_maximum_local_iterations;
+    }
+    [[nodiscard]] Long local_solves () const { return m_local_solves; }
+
+    State makeVecRHS () const { return make_cell_data(m_hierarchy, 1, 0); }
+    State makeVecLHS () const { return make_cell_data(m_hierarchy, 1, 1); }
+
+    void precondition (State& output, State const& rhs)
+    {
+        set_level_data(output, Real(0));
+        m_radiation_solver.precondition(get_level_ptrs(output),
+                                        get_level_const_ptrs(rhs));
+    }
+
+    void assign (State& lhs, State const& rhs) const
+    {
+        copy_level_data(lhs, rhs);
+    }
+
+    void copy_state (State& destination, State const& source) const
+    {
+        copy_level_data_with_ghosts(destination, source);
+    }
+
+    Real dotProduct (State const& lhs, State const& rhs) const
+    {
+        return composite_weighted_dot(lhs, rhs, m_hierarchy, m_masks) /
+               (m_energy_scale * m_energy_scale);
+    }
+
+    void increment (State& lhs, State const& rhs, Real scale) const
+    {
+        saxpy_level_data(lhs, scale, rhs);
+    }
+
+    void linComb (State& lhs, Real a, State const& rhs_a, Real b,
+                  State const& rhs_b) const
+    {
+        lincomb_level_data(lhs, a, rhs_a, b, rhs_b);
+    }
+
+    Real norm2 (State const& state) const
+    {
+        return std::sqrt(amrex::max(dotProduct(state, state), Real(0)));
+    }
+
+    Real norm2Data (State const& state) const
+    {
+        return composite_weighted_dot(state, state, m_hierarchy, m_masks);
+    }
+
+    Real norm2FromData (Real sum) const
+    {
+        return std::sqrt(amrex::max(
+            sum / (m_energy_scale * m_energy_scale), Real(0)));
+    }
+
+    void scale (State& state, Real factor) const
+    {
+        for (auto& level : state) {
+            level->mult(factor, 0, 1, 0);
+        }
+    }
+
+    void setToZero (State& state) const { set_level_data(state, Real(0)); }
+    State clone (State const& state) const { return clone_level_data(state); }
+
+    void fill_candidate (State& candidate, State const& state,
+                         State const& correction, Real step_length) const
+    {
+        // The same positivity-preserving update as the coupled method.
+        for (int level = 0; level < static_cast<int>(state.size()); ++level) {
+            for (MFIter mfi(*candidate[level]); mfi.isValid(); ++mfi) {
+                auto const next = candidate[level]->array(mfi);
+                auto const e = state[level]->const_array(mfi);
+                auto const de = correction[level]->const_array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    Real const exponent = amrex::max(
+                        Real(-50), amrex::min(
+                            Real(50), step_length * de(i,j,k) /
+                                amrex::max(e(i,j,k), Real(1.e-30))));
+                    next(i,j,k) = e(i,j,k) * std::exp(exponent);
+                });
+            }
+        }
+    }
+
+    bool admissible (State const& state) const
+    {
+        auto const [minimum, maximum] =
+            composite_minimum_maximum(state, m_masks);
+        return composite_all_finite(state, m_masks) && minimum > Real(0) &&
+               maximum < Real(8);
+    }
+
+    Real relative_change (State const& lhs, State const& rhs) const
+    {
+        return composite_maximum_relative_change(lhs, rhs, m_masks);
+    }
+
+  private:
+    DiffusionHierarchy const& m_hierarchy;
+    Vector<iMultiFab> const& m_masks;
+    LevelData const& m_old_energy;
+    LevelData const& m_old_temperature;
+    LevelData& m_atomic_number;
+    Real m_dt;
+    MLABecLapAMG& m_radiation_solver;
+    SolverSummary& m_summary;
+    Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_lo;
+    Array<LinOpBCType, AMREX_SPACEDIM> m_radiation_hi;
+    CoupledVector m_coupled;
+    CoupledVector m_residual;
+    LevelData m_temperature_derivative;
+    LevelData m_sigma;
+    LevelData m_radiation_diffusion;
+    LevelData m_energy_acoef;
+    FaceData m_radiation_bcoef;
+    LevelData m_robin_a;
+    LevelData m_robin_b;
+    LevelData m_robin_f;
+    Real m_energy_scale = Real(1);
+    int m_maximum_local_iterations = 0;
+    Long m_local_solves = 0;
+};
+
+// Norm of the full coupled (E, T) residual, scaled as in
+// CoupledNewtonProblem, so every solver is judged by the same measure.
+Real
+coupled_residual_norm (DiffusionHierarchy const& hierarchy,
+                       Vector<iMultiFab> const& masks,
+                       CoupledVector const& state,
+                       LevelData const& old_energy,
+                       LevelData const& old_temperature,
+                       LevelData& atomic_number, Real dt)
+{
+    CoupledVector residual = make_coupled_vector(hierarchy, 0);
+    auto sigma = make_cell_data(hierarchy, 1, 1);
+    auto radiation_diffusion = make_cell_data(hierarchy, 1, 1);
+    auto radiation_bcoef = make_face_data(hierarchy);
+    fill_coupled_residual(hierarchy, masks, state, old_energy,
+                          old_temperature, atomic_number, dt, residual, sigma,
+                          radiation_diffusion, radiation_bcoef);
+    Real const energy_scale = amrex::max(
+        composite_maximum(state.energy, masks), initial_radiation_energy);
+    Real const temperature_scale = amrex::max(
+        composite_maximum(state.temperature, masks),
+        std::sqrt(std::sqrt(initial_radiation_energy)));
+    return std::sqrt(amrex::max(
+        composite_weighted_dot(residual.energy, residual.energy, hierarchy,
+                               masks) / (energy_scale * energy_scale) +
+            composite_weighted_dot(residual.temperature,
+                                   residual.temperature, hierarchy, masks) /
+                (temperature_scale * temperature_scale),
+        Real(0)));
+}
 
 Real
 total_energy (LevelData const& energy, LevelData const& temperature,
@@ -882,24 +1225,22 @@ write_icase_plotfile (std::string const& name,
                       DiffusionHierarchy const& hierarchy,
                       LevelData const& energy, LevelData const& temperature,
                       LevelData const& atomic_number, LevelData const& sigma,
-                      LevelData const& radiation_diffusion,
-                      LevelData const& material_diffusion, Real time)
+                      LevelData const& radiation_diffusion, Real time)
 {
     if (name.empty()) {
         return;
     }
-    auto plot = make_cell_data(hierarchy, 6, 0);
+    auto plot = make_cell_data(hierarchy, 5, 0);
     for (int level = 0; level < static_cast<int>(plot.size()); ++level) {
         MultiFab::Copy(*plot[level], *energy[level], 0, 0, 1, 0);
         MultiFab::Copy(*plot[level], *temperature[level], 0, 1, 1, 0);
         MultiFab::Copy(*plot[level], *atomic_number[level], 0, 2, 1, 0);
         MultiFab::Copy(*plot[level], *sigma[level], 0, 3, 1, 0);
         MultiFab::Copy(*plot[level], *radiation_diffusion[level], 0, 4, 1, 0);
-        MultiFab::Copy(*plot[level], *material_diffusion[level], 0, 5, 1, 0);
     }
     Vector<std::string> const variables{
         "radiation_energy", "material_temperature", "atomic_number",
-        "absorption", "radiation_diffusion", "material_diffusion"};
+        "absorption", "radiation_diffusion"};
     WriteMultiLevelPlotfile(name, static_cast<int>(plot.size()),
                             get_level_const_ptrs(plot), variables,
                             hierarchy.geom, time,
@@ -932,13 +1273,11 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     auto atomic_number = make_cell_data(hierarchy, 1, 1);
     auto sigma = make_cell_data(hierarchy, 1, 1);
     auto radiation_diffusion = make_cell_data(hierarchy, 1, 1);
-    auto material_diffusion = make_cell_data(hierarchy, 1, 1);
     auto energy_acoef = make_cell_data(hierarchy, 1, 0);
     auto temperature_acoef = make_cell_data(hierarchy, 1, 0);
     auto energy_rhs = make_cell_data(hierarchy, 1, 0);
     auto temperature_rhs = make_cell_data(hierarchy, 1, 0);
     auto radiation_bcoef = make_face_data(hierarchy);
-    auto material_bcoef = make_face_data(hierarchy);
     auto robin_a = make_cell_data(hierarchy, 1, 0);
     auto robin_b = make_cell_data(hierarchy, 1, 0);
     auto robin_f = make_cell_data(hierarchy, 1, 0);
@@ -955,14 +1294,25 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
         AMREX_D_DECL(LinOpBCType::Robin, LinOpBCType::Neumann,
                      LinOpBCType::Neumann)};
     Array<LinOpBCType, AMREX_SPACEDIM> const radiation_hi = radiation_lo;
-    Array<LinOpBCType, AMREX_SPACEDIM> const insulated{
-        AMREX_D_DECL(LinOpBCType::Neumann, LinOpBCType::Neumann,
-                     LinOpBCType::Neumann)};
+
+    std::string nonlinear_solver = "ne_newton_krylov";
+    int maximum_quasi_newton_iterations = 200;
+    {
+        ParmParse pp;
+        pp.query("icase_solver", nonlinear_solver);
+        pp.query("icase_quasi_newton_max_iter",
+                 maximum_quasi_newton_iterations);
+    }
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        nonlinear_solver == "newton_krylov" ||
+            nonlinear_solver == "ne_newton_krylov" ||
+            nonlinear_solver == "ne_quasi_newton",
+        "icase_solver must be newton_krylov, ne_newton_krylov, or "
+        "ne_quasi_newton");
+    result.nonlinear_solver = nonlinear_solver;
 
     MLABecLapAMG radiation_solver(hierarchy.geom, hierarchy.grids,
                                   hierarchy.dmap);
-    MLABecLapAMG material_solver(hierarchy.geom, hierarchy.grids,
-                                 hierarchy.dmap);
     Real const nonlinear_tolerance =
         sizeof(Real) == sizeof(float) ? Real(3.e-4) : Real(2.e-7);
     int constexpr maximum_nonlinear_iterations = 20;
@@ -972,101 +1322,161 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
         copy_level_data(old_temperature, state.temperature);
         Real const old_total =
             total_energy(old_energy, old_temperature, hierarchy, masks);
-        for (int predictor = 0; predictor < 20; ++predictor) {
-            update_absorption_and_cell_diffusion(
-                hierarchy, state.energy, state.temperature, atomic_number,
-                sigma, radiation_diffusion, material_diffusion);
-            fill_paper_face_coefficients(
-                hierarchy, state.energy, state.temperature, atomic_number,
-                radiation_bcoef, material_bcoef);
-            fill_radiation_robin_data(hierarchy, sigma, robin_a, robin_b,
-                                      robin_f);
-            fill_linearized_systems(
-                old_energy, old_temperature, state.energy, state.temperature,
-                sigma, dt, energy_acoef, energy_rhs, temperature_acoef,
-                temperature_rhs);
-            RobinBCData predictor_robin{
-                get_level_const_ptrs(robin_a), get_level_const_ptrs(robin_b),
-                get_level_const_ptrs(robin_f)};
-            radiation_solver.setup(
-                Real(1), Real(1), get_level_const_ptrs(energy_acoef),
-                get_face_const_ptrs(radiation_bcoef), radiation_lo,
-                radiation_hi, {}, predictor_robin);
-            record_setup(result.solver, radiation_solver);
-            copy_level_data(predictor_solution.energy, state.energy);
-            auto const predictor_energy_info = radiation_solver.solve(
-                get_level_ptrs(predictor_solution.energy),
-                get_level_const_ptrs(energy_rhs), linear_tolerance(), Real(0));
-            record_solve(result.solver, predictor_energy_info);
-            fill_linearized_systems(
-                old_energy, old_temperature, predictor_solution.energy,
-                state.temperature, sigma, dt, energy_acoef, energy_rhs,
-                temperature_acoef, temperature_rhs);
-            material_solver.setup(
-                Real(1), Real(1), get_level_const_ptrs(temperature_acoef),
-                get_face_const_ptrs(material_bcoef), insulated, insulated,
-                {});
-            record_setup(result.solver, material_solver);
-            copy_level_data(predictor_solution.temperature,
-                            state.temperature);
-            auto const predictor_temperature_info = material_solver.solve(
-                get_level_ptrs(predictor_solution.temperature),
-                get_level_const_ptrs(temperature_rhs), linear_tolerance(),
-                Real(0));
-            record_solve(result.solver, predictor_temperature_info);
-            Real const predictor_change = amrex::max(
-                composite_maximum_relative_change(
-                    predictor_solution.energy, state.energy, masks),
-                composite_maximum_relative_change(
-                    predictor_solution.temperature, state.temperature,
-                    masks));
-            lincomb_level_data(state.energy, Real(0.3), state.energy,
-                               Real(0.7), predictor_solution.energy);
-            lincomb_level_data(state.temperature, Real(0.3),
-                               state.temperature, Real(0.7),
-                               predictor_solution.temperature);
-            if (predictor_change < Real(1.e-3)) {
-                break;
+        int step_iterations = 0;
+        bool converged = false;
+        if (nonlinear_solver == "newton_krylov") {
+            for (int predictor = 0; predictor < 20; ++predictor) {
+                update_absorption_and_cell_diffusion(
+                    hierarchy, state.energy, state.temperature, atomic_number,
+                    sigma, radiation_diffusion);
+                fill_paper_face_coefficients(
+                    hierarchy, state.energy, state.temperature, atomic_number,
+                    radiation_bcoef);
+                fill_radiation_robin_data(hierarchy, sigma, robin_a, robin_b,
+                                          robin_f);
+                fill_linearized_systems(
+                    old_energy, old_temperature, state.energy, state.temperature,
+                    sigma, dt, energy_acoef, energy_rhs, temperature_acoef,
+                    temperature_rhs);
+                RobinBCData predictor_robin{
+                    get_level_const_ptrs(robin_a), get_level_const_ptrs(robin_b),
+                    get_level_const_ptrs(robin_f)};
+                radiation_solver.setup(
+                    Real(1), Real(1), get_level_const_ptrs(energy_acoef),
+                    get_face_const_ptrs(radiation_bcoef), radiation_lo,
+                    radiation_hi, {}, predictor_robin);
+                record_setup(result.solver, radiation_solver);
+                copy_level_data(predictor_solution.energy, state.energy);
+                auto const predictor_energy_info = radiation_solver.solve(
+                    get_level_ptrs(predictor_solution.energy),
+                    get_level_const_ptrs(energy_rhs), linear_tolerance(), Real(0));
+                record_solve(result.solver, predictor_energy_info);
+                fill_linearized_systems(
+                    old_energy, old_temperature, predictor_solution.energy,
+                    state.temperature, sigma, dt, energy_acoef, energy_rhs,
+                    temperature_acoef, temperature_rhs);
+                solve_diagonal(predictor_solution.temperature,
+                               temperature_rhs, temperature_acoef);
+                Real const predictor_change = amrex::max(
+                    composite_maximum_relative_change(
+                        predictor_solution.energy, state.energy, masks),
+                    composite_maximum_relative_change(
+                        predictor_solution.temperature, state.temperature,
+                        masks));
+                lincomb_level_data(state.energy, Real(0.3), state.energy,
+                                   Real(0.7), predictor_solution.energy);
+                lincomb_level_data(state.temperature, Real(0.3),
+                                   state.temperature, Real(0.7),
+                                   predictor_solution.temperature);
+                if (predictor_change < Real(1.e-3)) {
+                    break;
+                }
             }
+            CoupledNewtonProblem problem(
+                hierarchy, masks, old_energy, old_temperature, atomic_number,
+                sigma, dt, radiation_solver, result.solver, energy_acoef,
+                temperature_acoef, radiation_bcoef, robin_a, robin_b,
+                robin_f, radiation_lo, radiation_hi);
+            NewtonKrylovOptions options;
+            options.nonlinear_tolerance = nonlinear_tolerance;
+            options.maximum_nonlinear_iterations =
+                maximum_nonlinear_iterations;
+            options.problem_name = "The ICASE 2001-12 coupled system";
+            NewtonKrylovSolver<CoupledNewtonProblem> newton(problem, options);
+            auto const solve = newton.solve(state);
+            step_iterations = solve.nonlinear_iterations;
+            converged = solve.converged;
+            result.final_nonlinear_change = solve.final_change;
+            result.total_newton_krylov_iterations +=
+                solve.total_linear_iterations;
+            result.maximum_newton_krylov_iterations = amrex::max(
+                result.maximum_newton_krylov_iterations,
+                solve.maximum_linear_iterations);
+        } else {
+            ReducedNewtonProblem problem(
+                hierarchy, masks, old_energy, old_temperature, atomic_number,
+                dt, radiation_solver, result.solver, radiation_lo,
+                radiation_hi);
+            if (nonlinear_solver == "ne_newton_krylov") {
+                NewtonKrylovOptions options;
+                options.nonlinear_tolerance = nonlinear_tolerance;
+                options.maximum_nonlinear_iterations =
+                    maximum_nonlinear_iterations;
+                options.problem_name =
+                    "The ICASE 2001-12 eliminated radiation system";
+                NewtonKrylovSolver<ReducedNewtonProblem> newton(problem,
+                                                                options);
+                auto const solve = newton.solve(state.energy);
+                step_iterations = solve.nonlinear_iterations;
+                converged = solve.converged;
+                result.final_nonlinear_change = solve.final_change;
+                result.total_newton_krylov_iterations +=
+                    solve.total_linear_iterations;
+                result.maximum_newton_krylov_iterations = amrex::max(
+                    result.maximum_newton_krylov_iterations,
+                    solve.maximum_linear_iterations);
+            } else {
+                // Brunner, Haut & Nowak Algorithm 2 (NLMFG-NE) for one
+                // group: solve T(E) cell by cell, then one fully converged
+                // linear solve of their Eq. (40) with the coefficients
+                // frozen, and repeat.  Their Jacobian ignores opacity
+                // derivatives; dT/dE here includes d(sigma)/dT.
+                auto quasi_newton_rhs = make_cell_data(hierarchy, 1, 0);
+                auto quasi_newton_residual = make_cell_data(hierarchy, 1, 0);
+                auto next_energy = make_cell_data(hierarchy, 1, 1);
+                Real change = std::numeric_limits<Real>::max();
+                for (int iteration = 0;; ++iteration) {
+                    problem.prepare(state.energy);
+                    problem.residual(state.energy, quasi_newton_residual);
+                    Real const norm = problem.norm2(quasi_newton_residual);
+                    if (norm <= nonlinear_tolerance &&
+                        change <= nonlinear_tolerance) {
+                        converged = true;
+                        break;
+                    }
+                    if (iteration == maximum_quasi_newton_iterations) { break; }
+                    problem.quasi_newton_rhs(quasi_newton_rhs);
+                    copy_level_data(next_energy, state.energy);
+                    auto const info = radiation_solver.solve(
+                        get_level_ptrs(next_energy),
+                        get_level_const_ptrs(quasi_newton_rhs), linear_tolerance(),
+                        Real(0));
+                    record_solve(result.solver, info);
+                    change = composite_maximum_relative_change(
+                        next_energy, state.energy, masks);
+                    copy_level_data(state.energy, next_energy);
+                    ++step_iterations;
+                }
+                result.final_nonlinear_change = change;
+            }
+            // T at the converged E, from the same cell-local solve.
+            problem.eliminate(state.energy, false);
+            copy_level_data(state.temperature, problem.temperature());
+            result.maximum_local_newton_iterations = amrex::max(
+                result.maximum_local_newton_iterations,
+                problem.maximum_local_iterations());
+            result.total_local_solves += problem.local_solves();
         }
-        CoupledNewtonProblem problem(
-            hierarchy, masks, old_energy, old_temperature, atomic_number,
-            sigma, dt, radiation_solver, material_solver, result.solver,
-            energy_acoef, temperature_acoef, radiation_bcoef, material_bcoef,
-            robin_a, robin_b, robin_f, radiation_lo, radiation_hi,
-            insulated);
-        NewtonKrylovOptions options;
-        options.nonlinear_tolerance = nonlinear_tolerance;
-        options.maximum_nonlinear_iterations =
-            maximum_nonlinear_iterations;
-        options.problem_name = "The ICASE 2001-12 coupled system";
-        NewtonKrylovSolver<CoupledNewtonProblem> newton(problem, options);
-        auto const solve = newton.solve(state);
-        int const step_iterations = solve.nonlinear_iterations;
-        result.final_nonlinear_change = solve.final_change;
-        result.total_nonlinear_iterations += solve.nonlinear_iterations;
-        result.total_newton_krylov_iterations +=
-            solve.total_linear_iterations;
-        result.maximum_newton_krylov_iterations = amrex::max(
-            result.maximum_newton_krylov_iterations,
-            solve.maximum_linear_iterations);
-        result.maximum_coupled_residual = amrex::max(
-            result.maximum_coupled_residual, solve.final_residual_norm);
+        result.total_nonlinear_iterations += step_iterations;
         result.maximum_nonlinear_iterations = amrex::max(
             result.maximum_nonlinear_iterations, step_iterations);
+        result.maximum_coupled_residual = amrex::max(
+            result.maximum_coupled_residual,
+            coupled_residual_norm(hierarchy, masks, state, old_energy,
+                                  old_temperature, atomic_number, dt));
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            solve.converged,
-            "The ICASE 2001-12 coupled nonlinear iteration did not converge");
+            converged,
+            "The ICASE 2001-12 nonlinear iteration did not converge");
 
         // The exchange source is equal and opposite in the E and T
         // equations.  Therefore the change in integral(E+T) must equal the
         // net radiation supplied through the two Marshak boundaries.
         update_absorption_and_cell_diffusion(
             hierarchy, state.energy, state.temperature, atomic_number, sigma,
-            radiation_diffusion, material_diffusion);
+            radiation_diffusion);
         fill_paper_face_coefficients(
             hierarchy, state.energy, state.temperature, atomic_number,
-            radiation_bcoef, material_bcoef);
+            radiation_bcoef);
         Real const new_total =
             total_energy(state.energy, state.temperature, hierarchy, masks);
         Real const expected_change = dt * radiation_boundary_input(
@@ -1091,7 +1501,7 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
 
     update_absorption_and_cell_diffusion(
         hierarchy, state.energy, state.temperature, atomic_number, sigma,
-        radiation_diffusion, material_diffusion);
+        radiation_diffusion);
     result.time_steps = time_steps;
     result.final_time = Real(time_steps) * dt;
     result.final_total_energy =
@@ -1108,7 +1518,7 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     write_icase_plotfile(plotfile_name, hierarchy, state.energy,
                          state.temperature,
                          atomic_number, sigma, radiation_diffusion,
-                         material_diffusion, result.final_time);
+                         result.final_time);
 
     Long const expected_high_z_cells =
         Long(n_cell / 3) * Long(n_cell / 3) * Long(2 * n_cell / 3);

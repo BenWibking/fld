@@ -63,7 +63,8 @@ main (int argc, char* argv[])
             double wall_seconds = amrex::second() - start;
             ParallelDescriptor::ReduceRealMax(wall_seconds);
             amrex::Print()
-                << "ICASE 2001-12 3-D rectangular prism: cells/high-Z cells="
+                << "ICASE 2001-12 3-D rectangular prism: solver="
+                << result.nonlinear_solver << ", cells/high-Z cells="
                 << result.cells << "/" << result.high_z_cells
                 << ", steps/final time=" << result.time_steps << "/"
                 << result.final_time
@@ -85,6 +86,10 @@ main (int argc, char* argv[])
                 << ", Newton-Krylov iterations total/max="
                 << result.total_newton_krylov_iterations << "/"
                 << result.maximum_newton_krylov_iterations
+                << ", cell-local solves/max Newton iterations="
+                << result.total_local_solves << "/"
+                << result.maximum_local_newton_iterations
+                << ", AMG setups=" << result.solver.setups
                 << ", whole-case wall=" << wall_seconds << " s"
                 << ", preconditioner=" << result.solver.preconditioner
                 << ", AMG backend=" << result.solver.amg_backend

@@ -39,6 +39,7 @@ record_setup (SolverSummary& summary, MLABecLapAMG const& solver)
     AMREX_ALWAYS_ASSERT(summary.preconditioner ==
                         solver.preconditioner_name());
     AMREX_ALWAYS_ASSERT(summary.amg_backend == solver.amg_backend_name());
+    ++summary.setups;
     summary.setup_seconds += solver.setup_seconds();
     if (solver.preconditioner() == MLABecPreconditioner::AMG &&
         solver.amg_backend() == MLABecAMGBackend::Native) {
