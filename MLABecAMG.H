@@ -1,7 +1,7 @@
 #ifndef MLABEC_AMG_H_
 #define MLABEC_AMG_H_
 
-#include <AMReX_AMG.H>
+#include <AMReX_AlgMG.H>
 #include <AMReX_Array.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_LO_BCTYPES.H>

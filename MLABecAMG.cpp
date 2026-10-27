@@ -692,7 +692,7 @@ struct MLABecLapAMG::Impl
         if (!matrix_only) {
             if (selected_preconditioner == MLABecPreconditioner::AMG) {
                 if (selected_amg_backend == MLABecAMGBackend::Native) {
-                    amg = std::make_unique<AMG<Real>>(*matrix);
+                    amg = std::make_unique<AlgMG<Real>>(*matrix);
                     amg->setStrongThreshold(options.strong_threshold);
                     amg->setPMaxElmts(options.max_interp_elements);
                     amg->setMaxLevels(options.max_levels);
@@ -1294,7 +1294,7 @@ struct MLABecLapAMG::Impl
 
     Gpu::PinnedVector<Real> boundary_rhs;
     std::unique_ptr<SpMatrix<Real>> matrix;
-    std::unique_ptr<AMG<Real>> amg;
+    std::unique_ptr<AlgMG<Real>> amg;
     std::unique_ptr<MLABecLaplacian> mlmg_operator;
     std::unique_ptr<MLMG> mlmg;
 #ifdef AMREX_USE_HYPRE
