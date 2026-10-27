@@ -76,5 +76,12 @@ mpirun -np 2 ./main3d.gnu.MPI.ex icase_only=1 icase_n_cell=24 \
 alone. `ne_newton_krylov` applies Jacobian-free Newton-Krylov to that reduced
 system; `ne_quasi_newton` is the paper's Algorithm 2 with frozen
 coefficients. `newton_krylov` is Jacobian-free Newton-Krylov on the coupled
-(E, T) system. See
+(E, T) system, with the material eliminated linearly (Schur complement) in
+its preconditioner. For both Newton-Krylov solvers, Newton starts from the
+previous step; if it fails, the step is retried from up to 20 damped
+linearized (Picard) predictor iterations. The default problem never needs
+this fallback; finer grids or larger time steps (e.g. `icase_n_cell=48`,
+`icase_dt=0.1`) do. The coupled solver matches `ne_newton_krylov` on the
+default problem. See
+`benchmarks/2026-10-27-linear-vs-nonlinear-elimination/RESULTS.md` and
 `benchmarks/2026-10-27-nonlinear-elimination/RESULTS.md`.

@@ -228,6 +228,8 @@ fill_radiation_robin_data (DiffusionHierarchy const& hierarchy,
     }
 }
 
+// Linearized (Picard) systems for the predictor iterations: emission
+// linearized about the current iterate, absorption coefficient frozen.
 void
 fill_linearized_systems (LevelData const& old_energy,
                          LevelData const& old_temperature,
@@ -559,6 +561,36 @@ solve_diagonal (LevelData& solution, LevelData const& rhs,
     }
 }
 
+// Schur-complement (Fleck) form of the E block: with the material block
+// t_d = 1/dt + k and k = -dR_E/dT, the E operator becomes
+// a_E - k sigma / t_d.  Returns k in `coupling`.
+void
+apply_schur_complement (LevelData& energy_acoef,
+                        LevelData const& temperature_acoef,
+                        LevelData const& sigma, Real dt, LevelData& coupling)
+{
+    Real const inverse_dt = Real(1) / dt;
+    for (int level = 0; level < static_cast<int>(sigma.size()); ++level) {
+        for (MFIter mfi(*energy_acoef[level]); mfi.isValid(); ++mfi) {
+            auto const ea = energy_acoef[level]->array(mfi);
+            auto const ta = temperature_acoef[level]->const_array(mfi);
+            auto const absorption = sigma[level]->const_array(mfi);
+            auto const k = coupling[level]->array(mfi);
+            ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int kk) noexcept
+            {
+                Real const c = ta(i,j,kk) - inverse_dt;
+                k(i,j,kk) = c;
+                ea(i,j,kk) -= c * absorption(i,j,kk) / ta(i,j,kk);
+            });
+        }
+    }
+}
+
+// The coupled preconditioner eliminates the diagonal material block
+// linearly (Schur complement, the linear analog of nonlinear elimination),
+// applies one AMG cycle to the resulting E operator, and back-substitutes
+// for T.
 class CoupledNewtonProblem
 {
   public:
@@ -586,7 +618,8 @@ class CoupledNewtonProblem
           m_radiation_lo(radiation_lo), m_radiation_hi(radiation_hi),
           m_trial_sigma(make_cell_data(hierarchy, 1, 1)),
           m_trial_radiation_diffusion(make_cell_data(hierarchy, 1, 1)),
-          m_trial_radiation_bcoef(make_face_data(hierarchy))
+          m_trial_radiation_bcoef(make_face_data(hierarchy)),
+          m_schur_coupling(make_cell_data(hierarchy, 1, 0))
     {}
 
     void prepare (State const& state)
@@ -601,6 +634,8 @@ class CoupledNewtonProblem
 
         fill_newton_preconditioner_coefficients(
             state, m_sigma, m_dt, m_energy_acoef, m_temperature_acoef);
+        apply_schur_complement(m_energy_acoef, m_temperature_acoef, m_sigma,
+                               m_dt, m_schur_coupling);
         fill_radiation_robin_data(
             m_hierarchy, m_sigma, m_robin_a, m_robin_b, m_robin_f);
         RobinBCData robin{get_level_const_ptrs(m_robin_a),
@@ -642,8 +677,24 @@ class CoupledNewtonProblem
     void precondition (CoupledVector& output, CoupledVector const& rhs)
     {
         set_coupled_vector(output, Real(0));
-        m_radiation_solver.precondition(
-            get_level_ptrs(output.energy), get_level_const_ptrs(rhs.energy));
+        // r_E + k r_T / t_d
+        LevelData energy_rhs = clone_level_data(rhs.energy);
+        for (int level = 0; level < static_cast<int>(energy_rhs.size());
+             ++level) {
+            for (MFIter mfi(*energy_rhs[level]); mfi.isValid(); ++mfi) {
+                auto const re = energy_rhs[level]->array(mfi);
+                auto const rt = rhs.temperature[level]->const_array(mfi);
+                auto const k = m_schur_coupling[level]->const_array(mfi);
+                auto const ta = m_temperature_acoef[level]->const_array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int kk) noexcept
+                {
+                    re(i,j,kk) += k(i,j,kk) * rt(i,j,kk) / ta(i,j,kk);
+                });
+            }
+        }
+        m_radiation_solver.precondition(get_level_ptrs(output.energy),
+                                        get_level_const_ptrs(energy_rhs));
         LevelData temperature_rhs = clone_level_data(rhs.temperature);
         add_exchange_coupling(temperature_rhs, output.energy, m_sigma);
         solve_diagonal(output.temperature, temperature_rhs,
@@ -766,6 +817,7 @@ class CoupledNewtonProblem
     LevelData m_trial_sigma;
     LevelData m_trial_radiation_diffusion;
     FaceData m_trial_radiation_bcoef;
+    LevelData m_schur_coupling;
     Real m_energy_scale = Real(1);
     Real m_temperature_scale = Real(1);
 };
@@ -1269,10 +1321,10 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     CoupledVector state = make_coupled_vector(hierarchy, 1);
     auto old_energy = make_cell_data(hierarchy, 1, 1);
     auto old_temperature = make_cell_data(hierarchy, 1, 1);
-    CoupledVector predictor_solution = make_coupled_vector(hierarchy, 1);
     auto atomic_number = make_cell_data(hierarchy, 1, 1);
     auto sigma = make_cell_data(hierarchy, 1, 1);
     auto radiation_diffusion = make_cell_data(hierarchy, 1, 1);
+    CoupledVector predictor_solution = make_coupled_vector(hierarchy, 1);
     auto energy_acoef = make_cell_data(hierarchy, 1, 0);
     auto temperature_acoef = make_cell_data(hierarchy, 1, 0);
     auto energy_rhs = make_cell_data(hierarchy, 1, 0);
@@ -1317,6 +1369,58 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
         sizeof(Real) == sizeof(float) ? Real(3.e-4) : Real(2.e-7);
     int constexpr maximum_nonlinear_iterations = 20;
 
+    // Damped linearized (Picard) predictor iterations from the current
+    // state, used to restart a step whose Newton iteration failed.
+    auto run_predictors = [&] () {
+        for (int predictor = 0; predictor < 20; ++predictor) {
+            update_absorption_and_cell_diffusion(
+                hierarchy, state.energy, state.temperature, atomic_number,
+                sigma, radiation_diffusion);
+            fill_paper_face_coefficients(
+                hierarchy, state.energy, state.temperature, atomic_number,
+                radiation_bcoef);
+            fill_radiation_robin_data(hierarchy, sigma, robin_a, robin_b,
+                                      robin_f);
+            fill_linearized_systems(
+                old_energy, old_temperature, state.energy, state.temperature,
+                sigma, dt, energy_acoef, energy_rhs, temperature_acoef,
+                temperature_rhs);
+            RobinBCData predictor_robin{
+                get_level_const_ptrs(robin_a), get_level_const_ptrs(robin_b),
+                get_level_const_ptrs(robin_f)};
+            radiation_solver.setup(
+                Real(1), Real(1), get_level_const_ptrs(energy_acoef),
+                get_face_const_ptrs(radiation_bcoef), radiation_lo,
+                radiation_hi, {}, predictor_robin);
+            record_setup(result.solver, radiation_solver);
+            copy_level_data(predictor_solution.energy, state.energy);
+            auto const predictor_energy_info = radiation_solver.solve(
+                get_level_ptrs(predictor_solution.energy),
+                get_level_const_ptrs(energy_rhs), linear_tolerance(), Real(0));
+            record_solve(result.solver, predictor_energy_info);
+            fill_linearized_systems(
+                old_energy, old_temperature, predictor_solution.energy,
+                state.temperature, sigma, dt, energy_acoef, energy_rhs,
+                temperature_acoef, temperature_rhs);
+            solve_diagonal(predictor_solution.temperature,
+                           temperature_rhs, temperature_acoef);
+            Real const predictor_change = amrex::max(
+                composite_maximum_relative_change(
+                    predictor_solution.energy, state.energy, masks),
+                composite_maximum_relative_change(
+                    predictor_solution.temperature, state.temperature,
+                    masks));
+            lincomb_level_data(state.energy, Real(0.3), state.energy,
+                               Real(0.7), predictor_solution.energy);
+            lincomb_level_data(state.temperature, Real(0.3),
+                               state.temperature, Real(0.7),
+                               predictor_solution.temperature);
+            if (predictor_change < Real(1.e-3)) {
+                break;
+            }
+        }
+    };
+
     for (int step = 0; step < time_steps; ++step) {
         copy_level_data(old_energy, state.energy);
         copy_level_data(old_temperature, state.temperature);
@@ -1325,89 +1429,33 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
         int step_iterations = 0;
         bool converged = false;
         if (nonlinear_solver == "newton_krylov") {
-            for (int predictor = 0; predictor < 20; ++predictor) {
-                update_absorption_and_cell_diffusion(
-                    hierarchy, state.energy, state.temperature, atomic_number,
-                    sigma, radiation_diffusion);
-                fill_paper_face_coefficients(
-                    hierarchy, state.energy, state.temperature, atomic_number,
-                    radiation_bcoef);
-                fill_radiation_robin_data(hierarchy, sigma, robin_a, robin_b,
-                                          robin_f);
-                fill_linearized_systems(
-                    old_energy, old_temperature, state.energy, state.temperature,
-                    sigma, dt, energy_acoef, energy_rhs, temperature_acoef,
-                    temperature_rhs);
-                RobinBCData predictor_robin{
-                    get_level_const_ptrs(robin_a), get_level_const_ptrs(robin_b),
-                    get_level_const_ptrs(robin_f)};
-                radiation_solver.setup(
-                    Real(1), Real(1), get_level_const_ptrs(energy_acoef),
-                    get_face_const_ptrs(radiation_bcoef), radiation_lo,
-                    radiation_hi, {}, predictor_robin);
-                record_setup(result.solver, radiation_solver);
-                copy_level_data(predictor_solution.energy, state.energy);
-                auto const predictor_energy_info = radiation_solver.solve(
-                    get_level_ptrs(predictor_solution.energy),
-                    get_level_const_ptrs(energy_rhs), linear_tolerance(), Real(0));
-                record_solve(result.solver, predictor_energy_info);
-                fill_linearized_systems(
-                    old_energy, old_temperature, predictor_solution.energy,
-                    state.temperature, sigma, dt, energy_acoef, energy_rhs,
-                    temperature_acoef, temperature_rhs);
-                solve_diagonal(predictor_solution.temperature,
-                               temperature_rhs, temperature_acoef);
-                Real const predictor_change = amrex::max(
-                    composite_maximum_relative_change(
-                        predictor_solution.energy, state.energy, masks),
-                    composite_maximum_relative_change(
-                        predictor_solution.temperature, state.temperature,
-                        masks));
-                lincomb_level_data(state.energy, Real(0.3), state.energy,
-                                   Real(0.7), predictor_solution.energy);
-                lincomb_level_data(state.temperature, Real(0.3),
-                                   state.temperature, Real(0.7),
-                                   predictor_solution.temperature);
-                if (predictor_change < Real(1.e-3)) {
-                    break;
+            // Newton starts from the previous step's state.  If it fails,
+            // restart the step from damped linearized (Picard) predictor
+            // iterations, which supply a better initial guess.
+            CoupledVector const start = clone_coupled_vector(state);
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                bool const fallback = attempt == 1;
+                if (fallback) {
+                    copy_coupled_vector(state, start);
+                    ++result.predictor_fallbacks;
+                    run_predictors();
                 }
-            }
-            CoupledNewtonProblem problem(
-                hierarchy, masks, old_energy, old_temperature, atomic_number,
-                sigma, dt, radiation_solver, result.solver, energy_acoef,
-                temperature_acoef, radiation_bcoef, robin_a, robin_b,
-                robin_f, radiation_lo, radiation_hi);
-            NewtonKrylovOptions options;
-            options.nonlinear_tolerance = nonlinear_tolerance;
-            options.maximum_nonlinear_iterations =
-                maximum_nonlinear_iterations;
-            options.problem_name = "The ICASE 2001-12 coupled system";
-            NewtonKrylovSolver<CoupledNewtonProblem> newton(problem, options);
-            auto const solve = newton.solve(state);
-            step_iterations = solve.nonlinear_iterations;
-            converged = solve.converged;
-            result.final_nonlinear_change = solve.final_change;
-            result.total_newton_krylov_iterations +=
-                solve.total_linear_iterations;
-            result.maximum_newton_krylov_iterations = amrex::max(
-                result.maximum_newton_krylov_iterations,
-                solve.maximum_linear_iterations);
-        } else {
-            ReducedNewtonProblem problem(
-                hierarchy, masks, old_energy, old_temperature, atomic_number,
-                dt, radiation_solver, result.solver, radiation_lo,
-                radiation_hi);
-            if (nonlinear_solver == "ne_newton_krylov") {
+                CoupledNewtonProblem problem(
+                    hierarchy, masks, old_energy, old_temperature,
+                    atomic_number, sigma, dt, radiation_solver,
+                    result.solver, energy_acoef, temperature_acoef,
+                    radiation_bcoef, robin_a, robin_b, robin_f, radiation_lo,
+                    radiation_hi);
                 NewtonKrylovOptions options;
                 options.nonlinear_tolerance = nonlinear_tolerance;
                 options.maximum_nonlinear_iterations =
                     maximum_nonlinear_iterations;
-                options.problem_name =
-                    "The ICASE 2001-12 eliminated radiation system";
-                NewtonKrylovSolver<ReducedNewtonProblem> newton(problem,
+                options.problem_name = "The ICASE 2001-12 coupled system";
+                options.abort_on_failure = fallback;
+                NewtonKrylovSolver<CoupledNewtonProblem> newton(problem,
                                                                 options);
-                auto const solve = newton.solve(state.energy);
-                step_iterations = solve.nonlinear_iterations;
+                auto const solve = newton.solve(state);
+                step_iterations += solve.nonlinear_iterations;
                 converged = solve.converged;
                 result.final_nonlinear_change = solve.final_change;
                 result.total_newton_krylov_iterations +=
@@ -1415,6 +1463,44 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
                 result.maximum_newton_krylov_iterations = amrex::max(
                     result.maximum_newton_krylov_iterations,
                     solve.maximum_linear_iterations);
+                if (converged) { break; }
+            }
+        } else {
+            ReducedNewtonProblem problem(
+                hierarchy, masks, old_energy, old_temperature, atomic_number,
+                dt, radiation_solver, result.solver, radiation_lo,
+                radiation_hi);
+            if (nonlinear_solver == "ne_newton_krylov") {
+                // As for the coupled solver: if Newton fails, restart the
+                // step from the predictor iterations' E.
+                CoupledVector const start = clone_coupled_vector(state);
+                for (int attempt = 0; attempt < 2; ++attempt) {
+                    bool const fallback = attempt == 1;
+                    if (fallback) {
+                        copy_coupled_vector(state, start);
+                        ++result.predictor_fallbacks;
+                        run_predictors();
+                    }
+                    NewtonKrylovOptions options;
+                    options.nonlinear_tolerance = nonlinear_tolerance;
+                    options.maximum_nonlinear_iterations =
+                        maximum_nonlinear_iterations;
+                    options.problem_name =
+                        "The ICASE 2001-12 eliminated radiation system";
+                    options.abort_on_failure = fallback;
+                    NewtonKrylovSolver<ReducedNewtonProblem> newton(problem,
+                                                                    options);
+                    auto const solve = newton.solve(state.energy);
+                    step_iterations += solve.nonlinear_iterations;
+                    converged = solve.converged;
+                    result.final_nonlinear_change = solve.final_change;
+                    result.total_newton_krylov_iterations +=
+                        solve.total_linear_iterations;
+                    result.maximum_newton_krylov_iterations = amrex::max(
+                        result.maximum_newton_krylov_iterations,
+                        solve.maximum_linear_iterations);
+                    if (converged) { break; }
+                }
             } else {
                 // Brunner, Haut & Nowak Algorithm 2 (NLMFG-NE) for one
                 // group: solve T(E) cell by cell, then one fully converged

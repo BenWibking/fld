@@ -86,6 +86,7 @@ main (int argc, char* argv[])
                 << ", Newton-Krylov iterations total/max="
                 << result.total_newton_krylov_iterations << "/"
                 << result.maximum_newton_krylov_iterations
+                << ", predictor fallbacks=" << result.predictor_fallbacks
                 << ", cell-local solves/max Newton iterations="
                 << result.total_local_solves << "/"
                 << result.maximum_local_newton_iterations

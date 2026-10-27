@@ -21,6 +21,10 @@ struct NewtonKrylovOptions
     amrex::Real nonlinear_tolerance = amrex::Real(1.e-7);
     amrex::Real linear_tolerance = amrex::Real(1.e-4);
     bool eisenstat_walker = false;
+    // When false, a failed linear solve or line search returns a result
+    // with converged = false (the state is left at the last accepted
+    // iterate) instead of aborting.
+    bool abort_on_failure = true;
     amrex::Real ew_initial_tolerance = amrex::Real(0.5);
     amrex::Real ew_maximum_tolerance = amrex::Real(0.9);
     amrex::Real ew_gamma = amrex::Real(0.9);
@@ -169,14 +173,17 @@ template <typename Problem> class NewtonKrylovSolver
                 gmres.solve(correction, linear_rhs, linear_tolerance,
                             RT(0));
             }
+            result.total_linear_iterations += gmres.getNumIters();
+            result.maximum_linear_iterations = amrex::max(
+                result.maximum_linear_iterations, gmres.getNumIters());
+            if (gmres.getStatus() != 0 && !m_options.abort_on_failure) {
+                return result;
+            }
             std::string const linear_failure =
                 m_options.problem_name +
                 " Newton linear solve did not converge";
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(gmres.getStatus() == 0,
                                              linear_failure.c_str());
-            result.total_linear_iterations += gmres.getNumIters();
-            result.maximum_linear_iterations = amrex::max(
-                result.maximum_linear_iterations, gmres.getNumIters());
 
             // The residual is unchanged, but prepare may change the norm's
             // scaling weights. Reweight its cached global sums locally.
@@ -218,6 +225,9 @@ template <typename Problem> class NewtonKrylovSolver
                 // fallback while retaining the same globalization test.
                 m_problem.precondition(correction, linear_rhs);
                 accepted = try_line_search();
+            }
+            if (!accepted && !m_options.abort_on_failure) {
+                return result;
             }
             std::string const line_search_failure =
                 m_options.problem_name + " Newton line search failed";
