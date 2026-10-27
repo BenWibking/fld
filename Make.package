@@ -6,3 +6,4 @@ CEXE_sources += FLDFieldOps.cpp
 CEXE_sources += CompositeGridTopology.cpp
 CEXE_sources += MLABecAMG.cpp
 CEXE_sources += MMSConvergence.cpp
+CEXE_sources += MovingMedium.cpp

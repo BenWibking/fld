@@ -95,6 +95,10 @@ ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
  *  two-level hierarchy; resolutions from `mms.n_cells`. */
 void run_mms_convergence ();
 
+/** Grey FLD and material energy in a medium with a prescribed uniform
+ *  velocity, to O(v/c); parameters under `vc.` (see MovingMedium.cpp). */
+void run_moving_medium ();
+
 } // namespace fld_test
 
 #endif

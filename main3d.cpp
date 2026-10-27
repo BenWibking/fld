@@ -48,6 +48,14 @@ main (int argc, char* argv[])
         int mms_only = 0;
         pp.query("mms_only", mms_only);
 
+        int vc_only = 0;
+        pp.query("vc_only", vc_only);
+        if (vc_only != 0) {
+            run_moving_medium();
+            amrex::Finalize();
+            return 0;
+        }
+
         if (mms_only != 0) {
             run_mms_convergence();
             amrex::Finalize();

@@ -85,3 +85,34 @@ this fallback; finer grids or larger time steps (e.g. `icase_n_cell=48`,
 default problem. See
 `benchmarks/2026-10-27-linear-vs-nonlinear-elimination/RESULTS.md` and
 `benchmarks/2026-10-27-nonlinear-elimination/RESULTS.md`.
+
+## Moving medium to O(v/c)
+
+`vc_only=1` runs grey flux-limited diffusion coupled to the material energy
+in a medium with a prescribed uniform velocity `vc.velocity` (in units of c),
+on the periodic unit cube, to first order in v/c. The matter-radiation
+four-force is the mixed-frame form of He, Wibking & Krumholz (2024,
+`papers/stae1244.pdf`), Eqs. (3)-(4). The radiation flux includes the
+enthalpy advection v.(E I + P) with the Levermore Eddington tensor of the
+limiter; the material receives c G0 - v.G, so E + T loses the work done by
+the radiation force on the flow. Material advection is explicit and operator
+split before the implicit update. Opacity is `vc.sigma0 * T^-vc.opacity_power`.
+
+`vc.solver` selects `newton_krylov` (default; coupled, with a
+Schur-complement preconditioner) or `ne_lagged` (nonlinear elimination with
+the work term lagged over an outer iteration). `vc.test=pulse` advects an
+equilibrium temperature pulse;
+`vc.test=mms` runs a steady manufactured solution (requires `vc.limiter=0`;
+`vc.advection=centered` gives second order, `upwind` first order):
+
+```sh
+mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_lagged
+```
+
+The defaults are optically thick (`vc.sigma0=1000`, `vc.opacity_power=3`).
+As for ICASE, if Newton fails the step is retried from up to 20 damped
+frozen-coefficient (Picard) predictor iterations; optically thin,
+limiter-dominated cases need this. Material advection is explicit, so
+`vc.dt` must satisfy dt * sum |v_d|/dx_d <= 1.
+
+See `benchmarks/2026-10-27-moving-medium/RESULTS.md`.
