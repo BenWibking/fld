@@ -39,6 +39,17 @@ point-to-point send calls and payload bytes by AMG level and phase, plus the
 sum of logical collective calls across ranks. The counts exclude messages
 generated inside MPI collectives and the reduction used to print the report.
 
+`mlabeclap_amg.cf_stencil` selects the coarse/fine flux discretization for
+both the matrix-free residual and the assembled preconditioner. The default,
+`hypre`, follows `amrex::HypreMLABecLap`: each fine-face flux uses a ghost
+value interpolated from the coarse cell, its transverse neighbors, and two
+fine cells, and the coarse cell receives the sum of the fine-face fluxes. It
+is second-order accurate but gives a nonsymmetric matrix. `two_point` couples
+each fine cell to its coarse neighbor with a symmetric two-point flux, which
+is inconsistent at the interface and only first-order accurate. Run
+`mms_only=1 mms.n_cells=16 32 64` for a manufactured-solution convergence
+study of either stencil; see `benchmarks/2026-10-27-cf-stencil/RESULTS.md`.
+
 ## ICASE 2001-12 radiation diffusion
 
 The ICASE test extends the coupled equations, coefficients, and boundary data

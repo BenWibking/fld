@@ -84,6 +84,10 @@ ICASE2001Result run_icase_2001 (int n_cell, int time_steps,
                                 amrex::Real dt, bool iteration_output,
                                 std::string const& plotfile_name);
 
+/** Manufactured-solution convergence study of the composite operator on a
+ *  two-level hierarchy; resolutions from `mms.n_cells`. */
+void run_mms_convergence ();
+
 } // namespace fld_test
 
 #endif

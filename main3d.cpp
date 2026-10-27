@@ -45,6 +45,14 @@ main (int argc, char* argv[])
         pp.query("icase_iteration_output", icase_iteration_output);
         pp.query("icase_write_plotfile", icase_write_plotfile);
         pp.query("icase_plotfile", icase_plotfile);
+        int mms_only = 0;
+        pp.query("mms_only", mms_only);
+
+        if (mms_only != 0) {
+            run_mms_convergence();
+            amrex::Finalize();
+            return 0;
+        }
 
         if (icase_only != 0) {
             double const start = amrex::second();

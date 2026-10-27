@@ -12,10 +12,26 @@
 #include <AMReX_Vector.H>
 
 #include <map>
+#include <string>
 #include <memory>
 
 namespace fld_test
 {
+
+/**
+ * Discretization of fluxes across coarse/fine interfaces.
+ *
+ * `TwoPoint` couples each fine cell to its coarse neighbor with a symmetric
+ * two-point flux.  `Hypre` follows `amrex::HypreMLABecLap`: each fine-face
+ * flux uses a fine ghost value interpolated quadratically in the normal
+ * direction from the transversely interpolated coarse value and two fine
+ * cells, and the coarse cell receives the sum of those fine-face fluxes.
+ */
+enum class CoarseFineStencil
+{
+    TwoPoint,
+    Hypre
+};
 
 /**
  * Immutable geometric and algebraic structure of a cell-centered AMR
@@ -24,7 +40,9 @@ namespace fld_test
  * Construction resolves every same-level and coarse/fine neighbor once and
  * assigns each directed face connection a canonical CSR slot.  Numerical
  * assembly therefore only evaluates coefficients and accumulates values into
- * an already sorted, duplicate-free sparsity pattern.
+ * an already sorted, duplicate-free sparsity pattern.  The coarse/fine
+ * stencil is selected by `mlabeclap_amg.cf_stencil = hypre|two_point`
+ * (default `hypre`).
  */
 class CompositeGridTopology
 {
@@ -75,6 +93,7 @@ class CompositeGridTopology
     [[nodiscard]] amrex::Vector<Cell> const& cells () const noexcept;
     [[nodiscard]] amrex::Long globalRows () const noexcept;
     [[nodiscard]] amrex::Long localRows () const noexcept;
+    [[nodiscard]] CoarseFineStencil coarseFineStencil () const noexcept;
 
     [[nodiscard]] NumericalAssembly assemble (
         amrex::Real ascalar, amrex::Real bscalar,
@@ -110,6 +129,38 @@ class CompositeGridTopology
         amrex::Real geometric_weight = amrex::Real(0);
         bool fine_coefficient_on_coarse_layout = false;
         bool coarse_fine = false;
+    };
+
+    // Where a residual evaluation reads a stencil entry's state value.
+    enum class StateSource
+    {
+        SameLevel,
+        FineOnCoarse,
+        CoarseOnFine
+    };
+
+    struct StencilEntry
+    {
+        amrex::Long column = -1;
+        amrex::Long matrix_slot = -1;
+        amrex::Real weight = amrex::Real(0);
+        StateSource source = StateSource::SameLevel;
+        amrex::IntVect index = amrex::IntVect::TheZeroVector();
+    };
+
+    // One fine-face flux of the Hypre coarse/fine stencil.  Its contribution
+    // to the row is the face coefficient times the geometric weight times
+    // the weighted sum of the entries' state values.
+    struct CoarseFineFlux
+    {
+        amrex::Long local_row = -1;
+        int level = -1;
+        int direction = -1;
+        amrex::IntVect face = amrex::IntVect::TheZeroVector();
+        amrex::Real geometric_weight = amrex::Real(0);
+        bool fine_coefficient_on_coarse_layout = false;
+        int first_entry = 0;
+        int num_entries = 0;
     };
 
     struct PhysicalFace
@@ -191,6 +242,7 @@ class CompositeGridTopology
         bool verify_face_transfers = false;
     };
 
+    [[nodiscard]] int fineStateGhost () const noexcept;
     void validateHierarchy ();
     void buildRowsAndConnections ();
     void buildPattern ();
@@ -203,6 +255,9 @@ class CompositeGridTopology
     amrex::AlgPartition m_partition;
     amrex::Vector<Cell> m_cells;
     amrex::Vector<Connection> m_connections;
+    CoarseFineStencil m_cf_stencil = CoarseFineStencil::Hypre;
+    amrex::Vector<CoarseFineFlux> m_cf_fluxes;
+    amrex::Vector<StencilEntry> m_cf_entries;
     amrex::Vector<PhysicalFace> m_physical_faces;
     amrex::Gpu::PinnedVector<amrex::Long> m_row_offset;
     amrex::Gpu::PinnedVector<amrex::Long> m_col_index;

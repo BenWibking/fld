@@ -58,6 +58,93 @@ is_robin (LinOpBCType type) noexcept
     return type == LinOpBCType::Robin || type == LinOpBCType::Marshak;
 }
 
+CoarseFineStencil
+parse_cf_stencil (std::string const& name)
+{
+    if (name == "two_point") { return CoarseFineStencil::TwoPoint; }
+    if (name == "hypre") { return CoarseFineStencil::Hypre; }
+    amrex::Abort("Unknown mlabeclap_amg.cf_stencil '" + name +
+                 "' (two_point or hypre)");
+    return CoarseFineStencil::TwoPoint;
+}
+
+// Weights of the fine ghost value across a coarse/fine face, in fine-cell
+// units from the face: the coarse value at -rr/2 and the fine cells at 0.5
+// and 1.5, evaluated at the ghost cell center -0.5 (as in HypreMLABecLap).
+Array<Real, 3>
+ghost_weights (int rr)
+{
+    Real const x = Real(-0.5);
+    Real const xs[3] = {Real(-0.5) * Real(rr), Real(0.5), Real(1.5)};
+    Array<Real, 3> weights{};
+    for (int m = 0; m < 3; ++m) {
+        Real weight = Real(1);
+        for (int n = 0; n < 3; ++n) {
+            if (n != m) { weight *= (x - xs[n]) / (xs[m] - xs[n]); }
+        }
+        weights[m] = weight;
+    }
+    return weights;
+}
+
+// Coarse value at the transverse center of a fine face, interpolated from
+// the coarse cell across the face and its uncovered transverse neighbors
+// (row_of(iv) >= 0).  Quadratic where both neighbors are available, else
+// linear, plus the 3-D cross term, as in HypreMLABecLap's fine-side kernel.
+template <class RowOf>
+Vector<std::pair<IntVect, Real>>
+coarse_face_interpolation (IntVect const& coarse, IntVect const& fine_cell,
+                           int direction, IntVect const& rr,
+                           RowOf const& row_of)
+{
+    Vector<std::pair<IntVect, Real>> weights{{coarse, Real(1)}};
+    auto add = [&weights] (IntVect const& cell, Real weight) {
+        for (auto& [existing, value] : weights) {
+            if (existing == cell) {
+                value += weight;
+                return;
+            }
+        }
+        weights.emplace_back(cell, weight);
+    };
+    Array<Real, AMREX_SPACEDIM> xt{};
+    for (int t = 1; t < AMREX_SPACEDIM; ++t) {
+        int const d = (direction + t) % AMREX_SPACEDIM;
+        int const r = rr[d];
+        Real const x = Real(-0.5) +
+            (Real(fine_cell[d] - amrex::coarsen(fine_cell[d], r) * r) +
+             Real(0.5)) / Real(r);
+        xt[t] = x;
+        IntVect const e = IntVect::TheDimensionVector(d);
+        bool const lo = row_of(coarse - e) >= 0;
+        bool const hi = row_of(coarse + e) >= 0;
+        if (lo && hi) {
+            add(coarse - e, Real(0.5) * x * (x - Real(1)));
+            add(coarse + e, Real(0.5) * x * (x + Real(1)));
+            add(coarse, -x * x);
+        } else if (hi) {
+            add(coarse + e, x);
+            add(coarse, -x);
+        } else if (lo) {
+            add(coarse - e, -x);
+            add(coarse, x);
+        }
+    }
+#if (AMREX_SPACEDIM == 3)
+    IntVect const e1 = IntVect::TheDimensionVector((direction + 1) % 3);
+    IntVect const e2 = IntVect::TheDimensionVector((direction + 2) % 3);
+    if (row_of(coarse - e1 - e2) >= 0 && row_of(coarse + e1 - e2) >= 0 &&
+        row_of(coarse - e1 + e2) >= 0 && row_of(coarse + e1 + e2) >= 0) {
+        Real const cross = Real(0.25) * xt[1] * xt[2];
+        add(coarse - e1 - e2, cross);
+        add(coarse + e1 + e2, cross);
+        add(coarse - e1 + e2, -cross);
+        add(coarse + e1 - e2, -cross);
+    }
+#endif
+    return weights;
+}
+
 std::unique_ptr<MultiFab>
 make_host_buffer (MultiFab const& source, int nghost)
 {
@@ -241,6 +328,9 @@ CompositeGridTopology::CompositeGridTopology (
 {
     BL_PROFILE("FLD::composite_topology");
     static_assert(AMREX_SPACEDIM == 2 || AMREX_SPACEDIM == 3);
+    std::string cf_stencil = "hypre";
+    ParmParse("mlabeclap_amg").query("cf_stencil", cf_stencil);
+    m_cf_stencil = parse_cf_stencil(cf_stencil);
     validateHierarchy();
     buildRowsAndConnections();
     buildPattern();
@@ -318,15 +408,17 @@ CompositeGridTopology::buildRowsAndConnections ()
     }
     AMREX_ALWAYS_ASSERT(next_row == m_partition[myproc + 1]);
 
+    bool const hypre_cf = m_cf_stencil == CoarseFineStencil::Hypre;
+    int const fine_ghost = fineStateGhost();
     Vector<std::unique_ptr<LongFabArray>> fine_rows_on_coarse(nlevels - 1);
     Vector<std::unique_ptr<LongFabArray>> coarse_rows_on_fine(nlevels - 1);
     for (int level = 0; level + 1 < nlevels; ++level) {
         fine_rows_on_coarse[level] = std::make_unique<LongFabArray>(
-            m_refined_coarse[level], m_dmap[level], 1, 1,
+            m_refined_coarse[level], m_dmap[level], 1, fine_ghost,
             topology_host_info());
         fine_rows_on_coarse[level]->setVal(Long(-1));
         fine_rows_on_coarse[level]->ParallelCopy(
-            *row_ids[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
+            *row_ids[level + 1], 0, 0, 1, IntVect(0), IntVect(fine_ghost),
             m_geom[level + 1].periodicity());
 
         BoxArray coarsened_fine = m_grids[level + 1];
@@ -442,7 +534,53 @@ CompositeGridTopology::buildRowsAndConnections ()
                                         "CompositeGridTopology fine-row metadata "
                                         "does not contain a requested interface cell");
                                     Long const fine_row = fine_rows(fine_cell);
-                                    if (fine_row >= 0) {
+                                    if (fine_row >= 0 && hypre_cf) {
+                                        // Reflux: minus the fine cell's flux
+                                        // K (phi_f0 - phi_ghost).
+                                        IntVect const second =
+                                            fine_cell + side *
+                                            IntVect::TheDimensionVector(direction);
+                                        Long const second_row = fine_rows(second);
+                                        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                                            second_row >= 0,
+                                            "The Hypre coarse/fine stencil "
+                                            "needs two fine cells normal to "
+                                            "the interface");
+                                        auto const cc =
+                                            ghost_weights(rr[direction]);
+                                        int const first = static_cast<int>(
+                                            m_cf_entries.size());
+                                        m_cf_entries.push_back(StencilEntry{
+                                            fine_row, Long(-1),
+                                            cc[1] - Real(1),
+                                            StateSource::FineOnCoarse,
+                                            fine_cell});
+                                        m_cf_entries.push_back(StencilEntry{
+                                            second_row, Long(-1), cc[2],
+                                            StateSource::FineOnCoarse,
+                                            second});
+                                        auto const coarse_weights =
+                                            coarse_face_interpolation(
+                                                iv, fine_cell, direction, rr,
+                                                [&row_fab] (IntVect const& c)
+                                                { return row_fab(c); });
+                                        for (auto const& [coarse, weight] :
+                                             coarse_weights) {
+                                            m_cf_entries.push_back(StencilEntry{
+                                                row_fab(coarse), Long(-1),
+                                                cc[0] * weight,
+                                                StateSource::SameLevel,
+                                                coarse});
+                                        }
+                                        m_cf_fluxes.push_back(CoarseFineFlux{
+                                            local_row, level, direction,
+                                            fine_face,
+                                            fine_area / dxf[direction], true,
+                                            first,
+                                            static_cast<int>(m_cf_entries.size()) -
+                                                first});
+                                        ++fine_neighbor_count;
+                                    } else if (fine_row >= 0) {
                                         m_connections.push_back(Connection{
                                             local_row, Long(-1), fine_row, level,
                                             direction, fine_face, fine_cell,
@@ -478,6 +616,46 @@ CompositeGridTopology::buildRowsAndConnections ()
                             coarse_row >= 0,
                             "CompositeGridTopology is missing a coarse row at "
                             "a coarse/fine interface");
+                        if (hypre_cf) {
+                            // K (phi_f0 - phi_ghost), with the ghost value
+                            // from the coarse value and two fine cells.
+                            IntVect const second = iv - side *
+                                IntVect::TheDimensionVector(direction);
+                            Long const second_row = row_fab(second);
+                            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                                second_row >= 0,
+                                "The Hypre coarse/fine stencil needs two "
+                                "fine cells normal to the interface");
+                            auto const cc = ghost_weights(
+                                m_ref_ratio[level - 1][direction]);
+                            int const first =
+                                static_cast<int>(m_cf_entries.size());
+                            m_cf_entries.push_back(StencilEntry{
+                                global_row, Long(-1), Real(1) - cc[1],
+                                StateSource::SameLevel, iv});
+                            m_cf_entries.push_back(StencilEntry{
+                                second_row, Long(-1), -cc[2],
+                                StateSource::SameLevel, second});
+                            auto const coarse_weights =
+                                coarse_face_interpolation(
+                                    coarse_neighbor, iv, direction,
+                                    m_ref_ratio[level - 1],
+                                    [&coarse_rows] (IntVect const& c)
+                                    { return coarse_rows(c); });
+                            for (auto const& [coarse, weight] :
+                                 coarse_weights) {
+                                m_cf_entries.push_back(StencilEntry{
+                                    coarse_rows(coarse), Long(-1),
+                                    -cc[0] * weight,
+                                    StateSource::CoarseOnFine, coarse});
+                            }
+                            m_cf_fluxes.push_back(CoarseFineFlux{
+                                local_row, level, direction, face,
+                                area / dx[direction], false, first,
+                                static_cast<int>(m_cf_entries.size()) -
+                                    first});
+                            continue;
+                        }
                         Real const coarse_dx =
                             m_geom[level - 1].CellSize(direction);
                         Real const distance = Real(0.5) *
@@ -506,6 +684,12 @@ CompositeGridTopology::buildPattern ()
     }
     for (auto const& connection : m_connections) {
         columns[connection.local_row].push_back(connection.column);
+    }
+    for (auto const& flux : m_cf_fluxes) {
+        for (int e = flux.first_entry; e < flux.first_entry + flux.num_entries;
+             ++e) {
+            columns[flux.local_row].push_back(m_cf_entries[e].column);
+        }
     }
 
     m_row_offset.resize(nlocal + 1);
@@ -541,6 +725,18 @@ CompositeGridTopology::buildPattern ()
         AMREX_ALWAYS_ASSERT(found != last && *found == connection.column);
         connection.matrix_slot =
             static_cast<Long>(found - m_col_index.begin());
+    }
+    for (auto const& flux : m_cf_fluxes) {
+        auto const first = m_col_index.begin() + m_row_offset[flux.local_row];
+        auto const last =
+            m_col_index.begin() + m_row_offset[flux.local_row + 1];
+        for (int e = flux.first_entry; e < flux.first_entry + flux.num_entries;
+             ++e) {
+            auto& entry = m_cf_entries[e];
+            auto const found = std::lower_bound(first, last, entry.column);
+            AMREX_ALWAYS_ASSERT(found != last && *found == entry.column);
+            entry.matrix_slot = static_cast<Long>(found - m_col_index.begin());
+        }
     }
 }
 
@@ -658,6 +854,24 @@ CompositeGridTopology::assemble (
         result.local_coarse_fine_connections += connection.coarse_fine;
     }
 
+    for (auto const& flux : m_cf_fluxes) {
+        MultiFab const& coefficient_field =
+            flux.fine_coefficient_on_coarse_layout
+                ? *fine_b_on_coarse[flux.level][flux.direction]
+                : *bcoef[flux.level][flux.direction];
+        Real const coefficient = bscalar *
+            coefficient_field.atLocalIdx(
+                m_cells[flux.local_row].local_grid)(flux.face) *
+            flux.geometric_weight;
+        AMREX_ALWAYS_ASSERT(coefficient >= Real(0));
+        for (int e = flux.first_entry; e < flux.first_entry + flux.num_entries;
+             ++e) {
+            auto const& entry = m_cf_entries[e];
+            result.matrix.mat[entry.matrix_slot] += coefficient * entry.weight;
+        }
+        ++result.local_coarse_fine_connections;
+    }
+
     bool const have_level_bc =
         static_cast<int>(boundary.level.size()) == numLevels();
     bool const have_robin =
@@ -711,8 +925,10 @@ CompositeGridTopology::assemble (
             if (slot != cell.diagonal_slot) {
                 Real const value = result.matrix.mat[slot];
                 maximum_offdiag = amrex::max(maximum_offdiag, value);
+                // The Hypre stencil's interpolation has negative weights.
                 AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                    value <= Real(1.e-14),
+                    value <= Real(1.e-14) ||
+                        m_cf_stencil == CoarseFineStencil::Hypre,
                     "CompositeGridTopology assembled a positive off-diagonal");
             }
         }
@@ -770,8 +986,8 @@ CompositeGridTopology::residualWithoutAssembly (
             if (level + 1 < nlevels) {
                 workspace->fine_state_on_coarse[level] =
                     std::make_unique<MultiFab>(
-                        m_refined_coarse[level], m_dmap[level], 1, 1,
-                        topology_host_info());
+                        m_refined_coarse[level], m_dmap[level], 1,
+                        fineStateGhost(), topology_host_info());
                 BoxArray coarsened_fine = m_grids[level + 1];
                 coarsened_fine.coarsen(m_ref_ratio[level]);
                 workspace->coarse_state_on_fine[level] =
@@ -917,8 +1133,8 @@ CompositeGridTopology::residualWithoutAssembly (
         {
             BL_PROFILE("FLD::residual::fine_state_start");
             fine_state_on_coarse[level]->ParallelCopy_nowait(
-                *host_state[level + 1], 0, 0, 1, IntVect(0), IntVect(1),
-                m_geom[level + 1].periodicity());
+                *host_state[level + 1], 0, 0, 1, IntVect(0),
+                IntVect(fineStateGhost()), m_geom[level + 1].periodicity());
         }
 
         coarse_state_on_fine[level]->setVal(Real(0));
@@ -1009,6 +1225,31 @@ CompositeGridTopology::residualWithoutAssembly (
         result[connection.local_row] += coefficient * (source - target);
     }
 
+    for (auto const& flux : m_cf_fluxes) {
+        Cell const& cell = m_cells[flux.local_row];
+        MultiFab const& coefficient_field =
+            flux.fine_coefficient_on_coarse_layout
+                ? *fine_b_on_coarse[flux.level][flux.direction]
+                : *bcoef_values[flux.level][flux.direction];
+        Real const coefficient = bscalar *
+            coefficient_field.atLocalIdx(cell.local_grid)(flux.face) *
+            flux.geometric_weight;
+        Real sum = Real(0);
+        for (int e = flux.first_entry; e < flux.first_entry + flux.num_entries;
+             ++e) {
+            auto const& entry = m_cf_entries[e];
+            MultiFab const& values =
+                entry.source == StateSource::SameLevel
+                    ? *host_state[cell.level]
+                    : entry.source == StateSource::FineOnCoarse
+                          ? *fine_state_on_coarse[flux.level]
+                          : *coarse_state_on_fine[flux.level - 1];
+            sum += entry.weight *
+                values.atLocalIdx(cell.local_grid)(entry.index);
+        }
+        result[flux.local_row] += coefficient * sum;
+    }
+
     for (auto const& physical : m_physical_faces) {
         LinOpBCType const type = physical.side < 0
                                      ? lobc[physical.direction]
@@ -1091,6 +1332,19 @@ Long
 CompositeGridTopology::globalRows () const noexcept
 {
     return m_partition.numGlobalRows();
+}
+
+CoarseFineStencil
+CompositeGridTopology::coarseFineStencil () const noexcept
+{
+    return m_cf_stencil;
+}
+
+int
+CompositeGridTopology::fineStateGhost () const noexcept
+{
+    // The Hypre stencil reaches the second fine cell from the interface.
+    return m_cf_stencil == CoarseFineStencil::Hypre ? 2 : 1;
 }
 
 Long
