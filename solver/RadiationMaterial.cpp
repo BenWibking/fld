@@ -127,6 +127,19 @@ rm_opacity (RMPhysics const& p, Real kappa, Real t) noexcept
     return kappa * std::pow(tp, -p.opacity_power);
 }
 
+// k = d/dT [sigma (T^4 - E)].  k < 0 where absorption heating raises the
+// opacity enough to run away (opacity_power < 0 with E > T^4, or > 4 with
+// E < T^4).
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
+rm_coupling (RMPhysics const& p, Real kappa, Real e, Real t) noexcept
+{
+    Real const tc = rm_positive(t);
+    Real const sigma = rm_opacity(p, kappa, tc);
+    Real const t3 = tc * tc * tc;
+    return -p.opacity_power * sigma / tc * (tc * t3 - e) +
+           Real(4) * sigma * t3;
+}
+
 // Levermore-Pomraning flux limiter lambda(R).
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_levermore (Real r) noexcept
@@ -877,6 +890,36 @@ struct RadiationMaterialSolver::Impl
         return all_converged != 0;
     }
 
+    // Smallest 1/|k| over uncovered cells with k < 0 (rm_coupling); the
+    // largest Real if there are none.
+    Real runaway_time (LevelData const& e, LevelData const& t)
+    {
+        ReduceOps<ReduceOpMin> reduce_op;
+        ReduceData<Real> reduce_data(reduce_op);
+        using Tuple = typename decltype(reduce_data)::Type;
+        Real const none = std::numeric_limits<Real>::max();
+        for (int level = 0; level < levels(); ++level) {
+            RMPhysics const p = level_physics(level);
+            for (MFIter mfi(*e[level]); mfi.isValid(); ++mfi) {
+                auto const ea = e[level]->const_array(mfi);
+                auto const ta = t[level]->const_array(mfi);
+                auto const ka = kappa[level]->const_array(mfi);
+                auto const mask = masks_[level].const_array(mfi);
+                reduce_op.eval(mfi.validbox(), reduce_data,
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+                {
+                    Real const coupling = rm_coupling(
+                        p, ka(i, j, k), ea(i, j, k), ta(i, j, k));
+                    return {mask(i, j, k) && coupling < Real(0)
+                                ? Real(-1) / coupling : none};
+                });
+            }
+        }
+        Real result = amrex::get<0>(reduce_data.value(reduce_op));
+        ParallelDescriptor::ReduceRealMin(result);
+        return result;
+    }
+
     // Scaled norm of the full (unlagged) coupled residual at (E, T).
     Real coupled_residual_norm (LevelData const& e, LevelData const& t)
     {
@@ -1271,14 +1314,12 @@ class CoupledProblem
                 ParallelFor(mfi.validbox(),
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    Real const tc = rm_positive(t(i, j, k));
-                    Real const sigma = rm_opacity(p, ka(i, j, k), tc);
-                    Real const dsigma = -p.opacity_power * sigma / tc;
-                    Real const t3 = tc * tc * tc;
-                    // k = d/dT [sigma (T^4 - E)], clipped where t_d falls
-                    // in [-2 sigma, 0]; see the class comment.
-                    Real const exact = dsigma * (tc * t3 - e(i, j, k)) +
-                                       Real(4) * sigma * t3;
+                    Real const sigma =
+                        rm_opacity(p, ka(i, j, k), rm_positive(t(i, j, k)));
+                    // k, clipped where t_d falls in [-2 sigma, 0]; see the
+                    // class comment.
+                    Real const exact =
+                        rm_coupling(p, ka(i, j, k), e(i, j, k), t(i, j, k));
                     Real const exact_diagonal = inverse_dt + exact;
                     Real const coupling =
                         exact_diagonal > Real(0) ||
@@ -1732,6 +1773,9 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
     copy_level_data(old_energy, state.energy);
     if (physics.moving) { explicit_material_advection(state.temperature); }
     copy_level_data(old_temperature, state.temperature);
+    counters.minimum_runaway_time =
+        amrex::min(counters.minimum_runaway_time,
+                   runaway_time(state.energy, state.temperature));
     RadiationMaterialState const start{clone_level_data(state.energy),
                                        clone_level_data(state.temperature)};
     int step_nonlinear = 0;
@@ -1795,6 +1839,12 @@ void
 RadiationMaterialSolver::advance (RadiationMaterialState& state, Real dt)
 {
     m_impl->advance(state, dt);
+}
+
+Real
+RadiationMaterialSolver::runaway_time (RadiationMaterialState const& state)
+{
+    return m_impl->runaway_time(state.energy, state.temperature);
 }
 
 EnergyBudget

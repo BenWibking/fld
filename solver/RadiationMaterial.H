@@ -120,6 +120,8 @@ struct RadiationMaterialCounters
     amrex::Real final_change = amrex::Real(0);
     amrex::Real maximum_coupled_residual = amrex::Real(0);
     amrex::Real final_coupled_residual = amrex::Real(0);
+    // Smallest runaway_time() at the start of any step.
+    amrex::Real minimum_runaway_time = std::numeric_limits<amrex::Real>::max();
     SolverSummary summary;        // AMG setups and converged linear solves
 };
 
@@ -171,6 +173,14 @@ class RadiationMaterialSolver
 
     /** Advance by dt; aborts if the step cannot be converged. */
     void advance (RadiationMaterialState& state, amrex::Real dt);
+
+    /** Smallest 1/|k|, with k = d/dT [sigma (T^4 - E)], over cells where
+     *  k < 0: there absorption heating raises the opacity enough to run
+     *  away (opacity_power < 0 with E > T^4, or > 4 with E < T^4).  A step
+     *  much longer than this does not resolve the runaway and can need many
+     *  iterations and the retry.  The largest Real if no cell has k < 0. */
+    [[nodiscard]] amrex::Real runaway_time (
+        RadiationMaterialState const& state);
 
     [[nodiscard]] EnergyBudget energy_budget (
         RadiationMaterialState const& state);

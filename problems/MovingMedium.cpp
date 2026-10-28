@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <string>
 
 // Moving-medium test problems for RadiationMaterialSolver on the periodic
@@ -72,8 +73,8 @@ void
 print_counters (std::string const& solver_name,
                 RadiationMaterialCounters const& c, double wall)
 {
-    amrex::Print()
-        << "solver=" << solver_name << ", Newton iterations total/max="
+    auto out = amrex::Print();
+    out << "solver=" << solver_name << ", Newton iterations total/max="
         << c.nonlinear << "/" << c.maximum_nonlinear
         << ", Krylov iterations=" << c.krylov
         << ", lag iterations total/max=" << c.lag_iterations << "/"
@@ -83,7 +84,13 @@ print_counters (std::string const& solver_name,
         << ", max local Newton iterations=" << c.maximum_local_iterations
         << ", AMG setups=" << c.summary.setups
         << ", max coupled residual=" << c.maximum_coupled_residual
-        << ", wall=" << wall << " s\n";
+        << ", min runaway time=";
+    if (c.minimum_runaway_time < std::numeric_limits<Real>::max()) {
+        out << c.minimum_runaway_time;
+    } else {
+        out << "none";
+    }
+    out << ", wall=" << wall << " s\n";
 }
 
 // ---------------------------------------------------------------------
