@@ -58,8 +58,6 @@ struct RadiationMaterialOptions
     /** Without the limiter, D = 1/(3 sigma). */
     bool limiter = true;
     DiffusionCoefficient diffusion = DiffusionCoefficient::FaceLimiter;
-    /** Upwind (true) or centered (false) advection. */
-    bool upwind = true;
     /** Indexed 2*direction + side (side 0 = low). */
     amrex::Array<RadiationBoundary, 2 * AMREX_SPACEDIM> boundary{};
     RobinCoefficient robin_b = RobinCoefficient::Marshak;

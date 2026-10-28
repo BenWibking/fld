@@ -145,7 +145,7 @@ velocity `vc.velocity` (in units of c) and opacity
 `vc.sigma0 * T^-vc.opacity_power`; `vc.solver` selects the solver (default
 `newton_krylov`). `vc.test=pulse` advects an equilibrium temperature pulse;
 `vc.test=mms` runs a steady manufactured solution (requires `vc.limiter=0`;
-`vc.advection=centered` gives second order, `upwind` first order):
+advection is upwind, so first order):
 
 ```sh
 mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_newton_krylov

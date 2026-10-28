@@ -79,7 +79,6 @@ struct RMPhysics
     GpuArray<Real, 3> dx{};
     Real dt = Real(1);
     bool limiter = true;
-    bool upwind = true;
     bool moving = false;
     int diffusion = rm_face_limiter;
     bool robin_b_diffusion = false;
@@ -342,11 +341,12 @@ rm_enthalpy_flux (RMPhysics const& p, Array4<Real const> const& e,
     return a;
 }
 
-// Face value of a cell-centered advective flux component.
+// Upwind face value of a cell-centered advective flux component.  (Centered
+// values with the explicit forward-Euler material update are unstable once
+// radiation diffusion no longer damps grid-scale modes.)
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_face_advection (RMPhysics const& p, int d, Real left, Real right) noexcept
 {
-    if (!p.upwind) { return Real(0.5) * (left + right); }
     return p.velocity[d] >= Real(0) ? left : right;
 }
 
@@ -463,7 +463,6 @@ struct RadiationMaterialSolver::Impl
         physics.diffusion = rm_diffusion_code(options.diffusion);
         physics.robin_b_diffusion =
             options.robin_b == RobinCoefficient::Diffusion;
-        physics.upwind = options.upwind;
         set_level_data(kappa, Real(1));
         set_level_data(source_energy, Real(0));
         set_level_data(source_temperature, Real(0));
@@ -1264,8 +1263,9 @@ class CoupledProblem
                     kk(i, j, k) = coupling;
                     ss(i, j, k) = sigma;
                     td(i, j, k) = diagonal;
-                    a(i, j, k) =
-                        inverse_dt + sigma - coupling * sigma / diagonal;
+                    // sigma - k sigma / t_d, without the cancellation that
+                    // makes it negative for very large sigma.
+                    a(i, j, k) = inverse_dt + sigma * inverse_dt / diagonal;
                 });
             }
         }

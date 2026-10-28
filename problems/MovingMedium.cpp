@@ -51,12 +51,6 @@ read_settings (ParmParse& pp)
     int limiter = 1;
     pp.query("limiter", limiter);
     options.limiter = limiter != 0;
-    std::string advection = "upwind";
-    pp.query("advection", advection);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        advection == "upwind" || advection == "centered",
-        "vc.advection must be upwind or centered");
-    options.upwind = advection == "upwind";
     for (auto& boundary : options.boundary) {
         boundary = RadiationBoundary::Periodic;
     }
@@ -269,8 +263,6 @@ run_mms (ParmParse& pp)
     if (pp.queryarr("mms_n_cells", requested)) { n_cells = requested; }
     Real dt = Real(0.1);
     pp.query("mms_dt", dt);
-    std::string advection = "upwind";
-    pp.query("advection", advection);
 
     std::string solver_name;
     Vector<Array<Real, 4>> errors; // E max, E L2, T max, T L2
@@ -339,7 +331,6 @@ run_mms (ParmParse& pp)
         print_counters(solver_name, solver.counters(), wall);
     }
     amrex::Print() << "\nMoving-medium MMS, solver=" << solver_name
-                   << ", advection=" << advection
                    << "\n     n     E max   ord      E L2   ord     T max   ord"
                       "      T L2   ord\n";
     for (int r = 0; r < static_cast<int>(errors.size()); ++r) {
