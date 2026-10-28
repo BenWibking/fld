@@ -1,5 +1,6 @@
 # AMREX_HOME defines the directory in which we will find all the AMReX code.
 AMREX_HOME := ./amrex
+TOP := .
 
 DEBUG        = FALSE
 USE_MPI      = TRUE
@@ -16,7 +17,9 @@ endif
 
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs
 
-include ./Make.package
+# The FLD solver library and the test problems that drive it.
+include $(TOP)/solver/Make.package
+include $(TOP)/problems/Make.package
 
 include $(AMREX_HOME)/Src/Base/Make.package
 include $(AMREX_HOME)/Src/AmrCore/Make.package

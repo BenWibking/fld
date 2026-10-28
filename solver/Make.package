@@ -1,0 +1,8 @@
+CEXE_sources += CompositeGridTopology.cpp
+CEXE_sources += DiffusionHierarchy.cpp
+CEXE_sources += FLDFieldOps.cpp
+CEXE_sources += MLABecAMG.cpp
+CEXE_sources += RadiationMaterial.cpp
+
+VPATH_LOCATIONS += $(TOP)/solver
+INCLUDE_LOCATIONS += $(TOP)/solver

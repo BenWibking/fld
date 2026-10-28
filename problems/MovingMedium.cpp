@@ -1,4 +1,4 @@
-#include "FLDTestCommon.H"
+#include "FLDTest.H"
 #include "RadiationMaterial.H"
 
 #include <AMReX_MFIter.H>

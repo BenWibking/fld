@@ -1,0 +1,9 @@
+CEXE_sources += main3d.cpp
+CEXE_sources += Blockage.cpp
+CEXE_sources += Cloud.cpp
+CEXE_sources += MLABecAMGTest.cpp
+CEXE_sources += MMSConvergence.cpp
+CEXE_sources += MovingMedium.cpp
+
+VPATH_LOCATIONS += $(TOP)/problems
+INCLUDE_LOCATIONS += $(TOP)/problems

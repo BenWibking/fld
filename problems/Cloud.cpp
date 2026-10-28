@@ -1,4 +1,4 @@
-#include "FLDTestCommon.H"
+#include "FLDTest.H"
 #include "RadiationMaterial.H"
 #include "PenroseCloudCenters.H"
 
@@ -7,6 +7,7 @@
 #include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
+#include <AMReX_PlotFileUtil.H>
 #include <AMReX_Reduce.H>
 
 #include <cmath>
