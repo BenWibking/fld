@@ -39,20 +39,21 @@ another collective per Newton step. Cloning copies every valid and ghost
 cell directly, including unequal ghost widths, without first zeroing storage.
 Local checks are in `benchmarks/2026-09-27-min-clone/RESULTS.md`.
 See `benchmarks/2026-09-27-newton-collectives/RESULTS.md` for local checks.
-The cloud's fixed extinction halos are filled when its Newton problem is
-constructed and reused throughout predictors, residual probes, and Newton
-preparation. Energy/diffusion halos and numerical coefficients are refreshed
-on each evaluation. A changed extinction field or mesh requires a new halo
-fill. General field-operation callers still refresh extinction halos by
-default. See `benchmarks/2026-09-27-extinction-ghosts/RESULTS.md`.
-All four jobs set `cloud_predictor_steps=0` to skip predictors and start
-Newton-Krylov from the initial state. Negative counts are rejected.
+The cloud's fixed extinction is the radiation-material solver's opacity
+coefficient; its halos are filled once when it is set and reused throughout
+predictors, residual probes, and Newton preparation. Energy, temperature, and
+diffusion halos and numerical coefficients are refreshed on each evaluation.
+See `benchmarks/2026-09-27-extinction-ghosts/RESULTS.md`.
+All four jobs set `cloud_predict_first=0` to start Newton-Krylov from the
+initial state; predictors then run only if Newton fails.
 The local eight-rank linear case at `cloud_fine_n=128` converged with four
 Newton steps and 13 total Krylov iterations in 2.17 s whole-case wall,
 versus 23 total linear iterations and 2.66--2.73 s with one predictor.
 See `benchmarks/2026-09-27-linear-cloud-8rank/RESULTS.md`. Frontier-resolution
-iteration counts and timings remain to be measured. Rebuild the executable
-to include support for zero predictors before submitting these jobs.
+iteration counts and timings remain to be measured.
+These measurements predate the unified radiation-material solver, which
+couples the material temperature to the cloud problem (one dt = 1e10
+backward Euler step to the steady state); rerun them before comparing.
 All four jobs enable `cloud_eisenstat_walker=1` for the cloud Newton solve.
 This uses Eisenstat--Walker Choice 2 for the GMRES relative tolerance, with
 initial value 0.5, gamma 0.9, exponent 2, upper cap 0.9, the published 0.1

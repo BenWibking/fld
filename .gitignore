@@ -1,0 +1,7 @@
+# Build outputs
+*.ex
+tmp_build_dir/
+Backtrace.*
+
+# Plotfiles
+plt_*/

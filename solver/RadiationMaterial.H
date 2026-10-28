@@ -88,6 +88,10 @@ struct RadiationMaterialOptions
     int maximum_line_search_iterations = 14;
     /** Centered (true) or forward finite-difference Jacobian products. */
     bool centered_difference = true;
+    /** Eisenstat-Walker forcing terms for the Newton GMRES tolerance. */
+    bool eisenstat_walker = false;
+    /** amrex::GMRES verbosity for the Newton linear solves. */
+    int linear_verbosity = 0;
     /** Newton line-search candidates with E at or above this are rejected;
      *  a bound on E (e.g. from the boundary data) keeps the eliminated
      *  temperature from overshooting on hard steps. */

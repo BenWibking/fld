@@ -28,7 +28,6 @@ linear_tolerance ()
 void
 record_setup (SolverSummary& summary, MLABecLapAMG const& solver)
 {
-    summary.outer_solver = "gmres";
     if (summary.preconditioner.empty()) {
         summary.preconditioner = solver.preconditioner_name();
         summary.amg_backend = solver.amg_backend_name();
@@ -57,8 +56,6 @@ record_solve (SolverSummary& summary, SolveInfo const& solution)
     summary.total_iterations += solution.iterations;
     summary.maximum_iterations =
         amrex::max(summary.maximum_iterations, solution.iterations);
-    summary.total_preconditioner_applications +=
-        solution.preconditioner_applications;
     summary.maximum_relative_residual = amrex::max(
         summary.maximum_relative_residual, solution.relative_residual);
     summary.solve_seconds += solution.solve_seconds;
@@ -1029,6 +1026,18 @@ rm_admissible (LevelData const& field, Vector<iMultiFab> const& masks,
            maximum < upper_bound;
 }
 
+// Sum local dot products over ranks in one reduction, then divide by the
+// norm scale.
+void
+rm_reduce_dots (Vector<Real>& dots, Real scale_squared)
+{
+    if (!dots.empty()) {
+        ParallelDescriptor::ReduceRealSum(dots.data(),
+                                          static_cast<int>(dots.size()));
+    }
+    for (Real& value : dots) { value /= scale_squared; }
+}
+
 void
 rm_scale (LevelData& field, Real a)
 {
@@ -1109,6 +1118,18 @@ class ReducedProblem
     {
         return composite_weighted_dot(lhs, rhs, m_impl.hierarchy,
                                       m_impl.masks_) / (m_scale * m_scale);
+    }
+    // All of a GMRES orthogonalization's dot products in one reduction.
+    void dotProducts (State const& lhs, Vector<State const*> const& basis,
+                      Vector<Real>& result) const
+    {
+        result.resize(basis.size());
+        for (std::size_t j = 0; j < basis.size(); ++j) {
+            result[j] = composite_weighted_dot(lhs, *basis[j],
+                                               m_impl.hierarchy,
+                                               m_impl.masks_, true);
+        }
+        rm_reduce_dots(result, m_scale * m_scale);
     }
     void increment (State& lhs, State const& rhs, Real a) const
     {
@@ -1297,6 +1318,25 @@ class CoupledProblem
                                       m_impl.hierarchy, m_impl.masks_) /
                    (m_temperature_scale * m_temperature_scale);
     }
+    // All of a GMRES orthogonalization's dot products in one reduction.
+    void dotProducts (State const& lhs, Vector<State const*> const& basis,
+                      Vector<Real>& result) const
+    {
+        Real const ratio = (m_energy_scale * m_energy_scale) /
+                           (m_temperature_scale * m_temperature_scale);
+        result.resize(basis.size());
+        for (std::size_t j = 0; j < basis.size(); ++j) {
+            result[j] =
+                composite_weighted_dot(lhs.energy, basis[j]->energy,
+                                       m_impl.hierarchy, m_impl.masks_,
+                                       true) +
+                ratio * composite_weighted_dot(lhs.temperature,
+                                               basis[j]->temperature,
+                                               m_impl.hierarchy,
+                                               m_impl.masks_, true);
+        }
+        rm_reduce_dots(result, m_energy_scale * m_energy_scale);
+    }
     void increment (State& lhs, State const& rhs, Real a) const
     {
         saxpy_level_data(lhs.energy, a, rhs.energy);
@@ -1483,6 +1523,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
     newton_options.maximum_line_search_iterations =
         options.maximum_line_search_iterations;
     newton_options.centered_difference = options.centered_difference;
+    newton_options.eisenstat_walker = options.eisenstat_walker;
+    newton_options.linear_verbosity = options.linear_verbosity;
     newton_options.problem_name = "The radiation-material system";
     newton_options.abort_on_failure = !allow_failure;
     auto fail = [allow_failure] (char const* message) {

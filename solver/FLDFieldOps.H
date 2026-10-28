@@ -79,12 +79,6 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] bool composite_all_finite (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
 
-// Check finite values and inclusive bounds on uncovered valid cells with
-// one local pass and one global reduction.
-[[nodiscard]] bool composite_all_in_range (
-    LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks,
-    amrex::Real minimum, amrex::Real maximum);
-
 } // namespace fld_test
 
 #endif

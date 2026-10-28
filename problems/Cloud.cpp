@@ -428,6 +428,7 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
     options.krylov_restart_length = 100;
     options.maximum_line_search_iterations = 24;
     options.centered_difference = false;
+    options.linear_verbosity = iteration_output ? 2 : 0;
     // One step long enough to be the steady problem, from the predictor
     // iterations; a geometric ramp is available but much slower.
     options.predict_first = true;
@@ -438,6 +439,7 @@ run_cloud (bool use_amr, int fine_n, bool limited, bool iteration_output,
         ParmParse pp;
         pp.query("cloud_solver", options.solver);
         pp.query("cloud_predict_first", options.predict_first);
+        pp.query("cloud_eisenstat_walker", options.eisenstat_walker);
         pp.query("cloud_dt_initial", dt);
         pp.query("cloud_dt_growth", dt_growth);
         pp.query("cloud_dt_final", dt_final);

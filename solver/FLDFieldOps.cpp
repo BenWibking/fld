@@ -420,34 +420,4 @@ composite_all_finite (LevelData const& data, Vector<iMultiFab> const& masks)
     return result != 0;
 }
 
-bool
-composite_all_in_range (LevelData const& data, Vector<iMultiFab> const& masks,
-                        Real minimum, Real maximum)
-{
-    AMREX_ALWAYS_ASSERT(data.size() == masks.size());
-    ReduceOps<ReduceOpMin> reduce_op;
-    ReduceData<int> reduce_data(reduce_op);
-    using Tuple = typename decltype(reduce_data)::Type;
-    for (int level = 0; level < static_cast<int>(data.size()); ++level) {
-        for (MFIter mfi(*data[level]); mfi.isValid(); ++mfi) {
-            auto const array = data[level]->const_array(mfi);
-            auto const mask = masks[level].const_array(mfi);
-            reduce_op.eval(mfi.validbox(), reduce_data,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
-            {
-                Real const value = array(i, j, k);
-                bool const finite = value == value &&
-                                    amrex::Math::abs(value) <
-                                        std::numeric_limits<Real>::max();
-                bool const in_range = finite && value >= minimum &&
-                                      value <= maximum;
-                return {(!mask(i, j, k) || in_range) ? 1 : 0};
-            });
-        }
-    }
-    int result = amrex::get<0>(reduce_data.value(reduce_op));
-    ParallelDescriptor::ReduceIntMin(result);
-    return result != 0;
-}
-
 } // namespace fld_test
