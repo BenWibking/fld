@@ -87,7 +87,8 @@ print_counters (std::string const& solver_name,
 }
 
 // ---------------------------------------------------------------------
-// Advecting pulse: an equilibrium Gaussian temperature pulse.
+// Advecting pulse: a Gaussian temperature pulse, in equilibrium with the
+// radiation unless vc.pulse_energy_factor != 1.
 
 void
 run_pulse (ParmParse& pp)
@@ -98,6 +99,8 @@ run_pulse (ParmParse& pp)
     Real background = Real(0.5);
     Real amplitude = Real(0.5);
     Real width = Real(0.1);
+    // E = energy_factor T^4 initially; 1 is equilibrium.
+    Real energy_factor = Real(1);
     std::string plotfile;
     pp.query("n_cell", n_cell);
     pp.query("steps", steps);
@@ -105,6 +108,7 @@ run_pulse (ParmParse& pp)
     pp.query("background_temperature", background);
     pp.query("pulse_amplitude", amplitude);
     pp.query("pulse_width", width);
+    pp.query("pulse_energy_factor", energy_factor);
     pp.query("plotfile", plotfile);
 
     auto const hierarchy = make_uniform_hierarchy(
@@ -129,7 +133,7 @@ run_pulse (ParmParse& pp)
                 amplitude * std::exp(-(x * x + y * y + z * z) / (width * width));
             Real const t2 = temperature * temperature;
             t(i, j, k) = temperature;
-            e(i, j, k) = t2 * t2;
+            e(i, j, k) = energy_factor * t2 * t2;
         });
     }
 
@@ -138,8 +142,8 @@ run_pulse (ParmParse& pp)
         ReduceOps<ReduceOpSum, ReduceOpSum> reduce_op;
         ReduceData<Real, Real> reduce_data(reduce_op);
         using Tuple = typename decltype(reduce_data)::Type;
-        Real const e_background = background * background * background *
-                                  background;
+        Real const e_background = energy_factor * background * background *
+                                  background * background;
         for (MFIter mfi(*state.energy[0]); mfi.isValid(); ++mfi) {
             auto const e = state.energy[0]->const_array(mfi);
             reduce_op.eval(mfi.validbox(), reduce_data,

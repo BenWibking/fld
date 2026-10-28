@@ -1226,6 +1226,13 @@ class ReducedProblem
 // with k = -dR_E/dT and t_d = dR_T/dT,
 //   (1/dt + sigma - k sigma / t_d - div D grad) dE = r_E + k r_T / t_d,
 //   dT = (r_T + sigma dE) / t_d.
+// k < 0 where absorption heating raises the opacity enough (opacity_power
+// < 0 with E > T^4, or > 4 with E < T^4).  The reaction coefficient is
+// (1/dt) (1 + sigma / t_d), which is not positive for t_d in [-sigma, 0].
+// In cells where t_d falls in [-2 sigma, 0] the preconditioner uses
+// max(k, 0) instead, the block inverse of a Jacobian without that
+// feedback; elsewhere it keeps the exact k, and the coefficient is at
+// least 1/(2 dt).  Newton still uses the true residual.
 class CoupledProblem
 {
   public:
@@ -1268,9 +1275,16 @@ class CoupledProblem
                     Real const sigma = rm_opacity(p, ka(i, j, k), tc);
                     Real const dsigma = -p.opacity_power * sigma / tc;
                     Real const t3 = tc * tc * tc;
-                    // k = d/dT [sigma (T^4 - E)]
-                    Real const coupling = dsigma * (tc * t3 - e(i, j, k)) +
-                                          Real(4) * sigma * t3;
+                    // k = d/dT [sigma (T^4 - E)], clipped where t_d falls
+                    // in [-2 sigma, 0]; see the class comment.
+                    Real const exact = dsigma * (tc * t3 - e(i, j, k)) +
+                                       Real(4) * sigma * t3;
+                    Real const exact_diagonal = inverse_dt + exact;
+                    Real const coupling =
+                        exact_diagonal > Real(0) ||
+                                exact_diagonal <= Real(-2) * sigma
+                            ? exact
+                            : amrex::max(exact, Real(0));
                     Real const diagonal = inverse_dt + coupling;
                     kk(i, j, k) = coupling;
                     ss(i, j, k) = sigma;
