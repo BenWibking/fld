@@ -21,9 +21,10 @@ struct NewtonKrylovOptions
     amrex::Real nonlinear_tolerance = amrex::Real(1.e-7);
     amrex::Real linear_tolerance = amrex::Real(1.e-4);
     bool eisenstat_walker = false;
-    // When false, a failed line search returns a result with converged =
-    // false (the state is left at the last accepted iterate) instead of
-    // aborting.  An unconverged linear solve is not a failure by itself.
+    // When false, a failed line search or a non-finite initial residual
+    // returns a result with converged = false (the state is left at the
+    // last accepted iterate) instead of aborting.  An unconverged linear
+    // solve is not a failure by itself.
     bool abort_on_failure = true;
     amrex::Real ew_initial_tolerance = amrex::Real(0.5);
     amrex::Real ew_maximum_tolerance = amrex::Real(0.9);
@@ -100,6 +101,13 @@ template <typename Problem> class NewtonKrylovSolver
         m_problem.residual(state, residual);
         auto residual_norm_data = m_problem.norm2Data(residual);
         result.final_residual_norm = m_problem.norm2FromData(residual_norm_data);
+        if (!std::isfinite(result.final_residual_norm)) {
+            std::string const initial_failure =
+                m_options.problem_name + " initial residual is not finite";
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!m_options.abort_on_failure,
+                                             initial_failure.c_str());
+            return result;
+        }
         if (result.final_residual_norm <= m_options.nonlinear_tolerance) {
             result.final_change = RT(0);
             result.converged = true;

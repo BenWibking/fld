@@ -417,6 +417,8 @@ struct RadiationMaterialSolver::Impl
           zero(make_cell_data(a_hierarchy, 1, 0)),
           bcoef(make_face_data(a_hierarchy))
     {
+        // Linear-solve failures fail the step attempt; see attempt_step.
+        solver.setAbortOnFailure(false);
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             options.solver == "newton_krylov" ||
                 options.solver == "ne_newton_krylov" ||
@@ -758,7 +760,8 @@ struct RadiationMaterialSolver::Impl
     // overwriting eliminated_temperature; optionally returns dT/dE.
     // Finite-difference Jacobian probes can make E negative in cold cells,
     // where g may have no positive root, so the solve absorbs max(E, 0).
-    void eliminate (LevelData const& e, bool with_derivative)
+    // False when a cell-local solve did not converge (on any rank).
+    [[nodiscard]] bool eliminate (LevelData const& e, bool with_derivative)
     {
         BL_PROFILE("FLD::rm_eliminate");
         copy_level_data(energy, e);
@@ -869,10 +872,9 @@ struct RadiationMaterialSolver::Impl
         int all_converged = amrex::get<1>(values);
         ParallelDescriptor::ReduceIntMax(iterations);
         ParallelDescriptor::ReduceIntMin(all_converged);
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            all_converged != 0, "Cell-local material solve did not converge");
         counters.maximum_local_iterations =
             amrex::max(counters.maximum_local_iterations, iterations);
+        return all_converged != 0;
     }
 
     // Scaled norm of the full (unlagged) coupled residual at (E, T).
@@ -989,7 +991,7 @@ struct RadiationMaterialSolver::Impl
 
     bool attempt_step (RadiationMaterialState& state, bool allow_failure,
                        int& step_nonlinear);
-    void predictors (RadiationMaterialState& state);
+    [[nodiscard]] bool predictors (RadiationMaterialState& state);
     void advance (RadiationMaterialState& state, Real dt);
 };
 
@@ -1099,7 +1101,7 @@ class ReducedProblem
     {
         BL_PROFILE("FLD::rm_reduced_prepare");
         m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
-        m_impl.eliminate(e, true);
+        if (!m_impl.eliminate(e, true)) { m_failed = true; }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         Real const inverse_dt = Real(1) / m_impl.physics.dt;
         for (int level = 0; level < m_impl.levels(); ++level) {
@@ -1117,14 +1119,23 @@ class ReducedProblem
         m_impl.setup_solver();
     }
 
+    // R(E) is undefined where the cell-local solves fail: the residual is
+    // then NaN, which the line search rejects.  A failure in prepare()
+    // fails every later residual, so the Newton iteration stops.
     void residual (State const& e, State& output)
     {
-        m_impl.eliminate(e, false);
+        if (!m_impl.eliminate(e, false) || m_failed) {
+            set_level_data(output, std::numeric_limits<Real>::quiet_NaN());
+            return;
+        }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         m_impl.evaluate_residual(WorkCoupling::Lagged);
         lincomb_level_data(output, Real(1), m_impl.residual_energy, Real(1),
                            m_impl.residual_temperature);
     }
+
+    // Whether a prepare() elimination failed.
+    [[nodiscard]] bool failed () const { return m_failed; }
 
     void linearized_residual (State const& e, State& output)
     {
@@ -1207,6 +1218,7 @@ class ReducedProblem
   private:
     Impl& m_impl;
     Real m_scale = Real(1);
+    bool m_failed = false;
 };
 
 // Coupled (E, T) Newton-Krylov.  The preconditioner eliminates the
@@ -1466,12 +1478,12 @@ rm_record_newton (RadiationMaterialCounters& counters, Result const& result,
 } // namespace
 
 // Damped (0.7) linearized (Picard) iterations, until the relative change
-// falls below 1e-3 (at most 20): with sigma and D frozen, a converged solve
+// falls below 1e-3 (at most 20); false if a linear solve fails: with sigma and D frozen, a converged solve
 // of (1/dt + sigma - div D grad) dE = -R_E, then the diagonal update
 // (1/dt + 4 sigma T^3) dT = -R_T at the new E.  Without velocity this is
 // E <- [E^n/dt + sigma T^4], T <- linearized emission.  Used to restart a
 // step whose Newton iteration failed.
-void
+bool
 RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
 {
     BL_PROFILE("FLD::rm_predictors");
@@ -1503,6 +1515,7 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
                                        get_level_const_ptrs(rhs),
                                        linear_tolerance(), Real(0));
         record_solve(counters.summary, info);
+        if (!info.converged) { return false; }
         auto next_energy = clone_level_data(state.energy);
         saxpy_level_data(next_energy, Real(1), correction);
 
@@ -1540,10 +1553,12 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
         average_down_hierarchy(state.temperature, hierarchy);
         if (change < Real(1.e-3)) { break; }
     }
+    return true;
 }
 
 // One attempt at the implicit step from `state`.  With allow_failure, a
-// Newton, lag, or quasi-Newton failure returns false instead of aborting.
+// Newton, lag, quasi-Newton, cell-local material, or linear-solve failure
+// returns false instead of aborting.
 bool
 RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
                                              bool allow_failure,
@@ -1596,6 +1611,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         for (int iteration = 0;; ++iteration) {
             ReducedProblem problem(*this, state.energy);
             problem.prepare(state.energy);
+            if (problem.failed()) {
+                return fail("Cell-local material solve did not converge");
+            }
             copy_level_data(state.temperature, eliminated_temperature);
             Real const unlagged =
                 coupled_residual_norm(state.energy, state.temperature);
@@ -1614,6 +1632,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
                                            get_level_const_ptrs(rhs),
                                            linear_tolerance(), Real(0));
             record_solve(counters.summary, info);
+            if (!info.converged) {
+                return fail("Quasi-Newton linear solve did not converge");
+            }
             auto next = clone_level_data(state.energy);
             saxpy_level_data(next, Real(1), correction);
             average_down_hierarchy(next, hierarchy);
@@ -1631,9 +1652,13 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
         if (!result.converged) {
-            return fail("Reduced Newton-Krylov did not converge");
+            return fail(problem.failed()
+                            ? "Cell-local material solve did not converge"
+                            : "Reduced Newton-Krylov did not converge");
         }
-        eliminate(state.energy, false);
+        if (!eliminate(state.energy, false)) {
+            return fail("Cell-local material solve did not converge");
+        }
         copy_level_data(state.temperature, eliminated_temperature);
         return true;
     }
@@ -1644,7 +1669,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
     // has converged.)
     int lag = 0;
     for (;; ++lag) {
-        eliminate(state.energy, false);
+        if (!eliminate(state.energy, false)) {
+            return fail("Cell-local material solve did not converge");
+        }
         copy_level_data(state.temperature, eliminated_temperature);
         Real const unlagged =
             coupled_residual_norm(state.energy, state.temperature);
@@ -1663,7 +1690,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
         if (!result.converged) {
-            return fail("Lagged inner Newton-Krylov did not converge");
+            return fail(problem.failed()
+                            ? "Cell-local material solve did not converge"
+                            : "Lagged inner Newton-Krylov did not converge");
         }
     }
     counters.lag_iterations += lag;
@@ -1676,7 +1705,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
 // from the previous step's state; if it fails, the step is retried from the
 // predictor iterations' state.  With predict_first the order is reversed:
 // the predictors are deterministic, so retrying from them would only repeat
-// the failed attempt.
+// the failed attempt.  Predictors whose linear solve fails count as a failed
+// attempt.
 void
 RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
                                         Real dt)
@@ -1698,7 +1728,12 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
             copy_level_data(state.temperature, start.temperature);
             ++counters.predictor_fallbacks;
         }
-        if (fallback != options.predict_first) { predictors(state); }
+        if (fallback != options.predict_first && !predictors(state)) {
+            if (fallback) {
+                amrex::Abort("Predictor linear solve did not converge");
+            }
+            continue;
+        }
         if (attempt_step(state, !fallback, step_nonlinear)) { break; }
     }
     average_down_hierarchy(state.energy, hierarchy);

@@ -894,7 +894,7 @@ struct MLABecLapAMG::Impl
                      absolute_tolerance);
         double solve_seconds = amrex::second() - solve_start;
         auto const& solver = gmres->getGMRES();
-        if (solver.getStatus() != 0) {
+        if (solver.getStatus() != 0 && abort_on_failure) {
             abort_once("GMRES+multigrid did not converge in "
                        "MLABecLapAMG::solve");
         }
@@ -938,11 +938,13 @@ struct MLABecLapAMG::Impl
         }
         gmres->getGMRES().setInitialGuessNonzero(false);
         gmres->getGMRES().setMaxIters(max_iter);
-        if (solver.getStatus() != 0) {
+        if (solver.getStatus() != 0 && abort_on_failure) {
             abort_once("GMRES+multigrid did not converge in "
                        "MLABecLapAMG::solve");
         }
         SolveInfo info;
+        info.converged =
+            solver.getStatus() == 0 && absolute_residual <= check_target;
         info.iterations = iterations;
         info.preconditioner_applications =
             current_preconditioner_applications;
@@ -985,7 +987,7 @@ struct MLABecLapAMG::Impl
             }
             out << "]" << std::endl;
         }
-        if (info.absolute_residual > check_target) {
+        if (!info.converged && abort_on_failure) {
             abort_once(nullptr);
         }
 
@@ -1276,6 +1278,7 @@ struct MLABecLapAMG::Impl
     int restart_length = 50;
     Real true_residual_factor = Real(5);
     bool matrix_only = false;
+    bool abort_on_failure = true;
     bool measure_setup_messages = false;
     double last_setup_seconds = 0.0;
     int current_preconditioner_applications = 0;
@@ -1352,6 +1355,12 @@ MLABecLapAMG::setMaxIter (int value)
     if (m_impl->gmres) {
         m_impl->gmres->getGMRES().setMaxIters(value);
     }
+}
+
+void
+MLABecLapAMG::setAbortOnFailure (bool value)
+{
+    m_impl->abort_on_failure = value;
 }
 
 void

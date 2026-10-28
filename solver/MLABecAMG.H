@@ -34,6 +34,9 @@ struct SolveInfo
     amrex::Real absolute_residual = amrex::Real(0);
     double solve_seconds = 0.0;
     double preconditioner_seconds = 0.0;
+    // False only when setAbortOnFailure(false) let an unconverged solve
+    // return.
+    bool converged = true;
 };
 
 enum class MLABecPreconditioner
@@ -137,6 +140,9 @@ class MLABecLapAMG
     void setVerbose (int value);
     void setMaxIter (int value);
     void setMatrixOnly (bool value);
+    /** When false, `solve` returns an unconverged solution with
+     *  `SolveInfo::converged = false` instead of aborting (default true). */
+    void setAbortOnFailure (bool value);
 
     void setup (
         amrex::Real ascalar, amrex::Real bscalar,
