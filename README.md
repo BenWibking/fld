@@ -24,8 +24,7 @@ mpirun -np 2 ./main3d.gnu.MPI.ex cloud_fine_n=64 cloud_case=amr \
 `cloud_case=both` runs both in one invocation. `cloud_fine_n` must be a
 multiple of 32 for AMR. The 74 sphere centroids are fixed in
 `problems/PenroseCloudCenters.H`, taken from a relaxed Penrose vertex patch
-(the generator script is not in this repository). See
-`benchmarks/penrose-cloud-relaxation/RESULTS.md` for geometry and run results.
+(the generator script is not in this repository).
 
 The clouds run on the radiation-material solver below with v = 0: the
 material temperature is coupled with opacity equal to the extinction, and one
@@ -64,7 +63,7 @@ is second-order accurate but gives a nonsymmetric matrix. `two_point` couples
 each fine cell to its coarse neighbor with a symmetric two-point flux, which
 is inconsistent at the interface and only first-order accurate. Run
 `mms_only=1 mms.n_cells=16 32 64` for a manufactured-solution convergence
-study of either stencil; see `benchmarks/2026-10-27-cf-stencil/RESULTS.md`.
+study of either stencil.
 
 `amg_checks=1` runs the `MLABecLapAMG` unit checks (`problems/MLABecAMGTest.cpp`):
 operator action against an independent two-point composite reference on
@@ -77,7 +76,7 @@ operator-action check always uses `two_point`.
 ## ICASE 2001-12 radiation diffusion
 
 The ICASE test extends the coupled equations, coefficients, and boundary data
-from Section 4 of `papers/icase-2001-12.pdf` to the unit cube. The high-opacity
+from Section 4 of ICASE Report No. 2001-12 to the unit cube. The high-opacity
 rectangular prism spans the middle third of x and y and the middle two-thirds
 of z. Radiation enters through the x-low Robin face and leaves through the
 x-high Robin face; the y and z faces are insulated. The solver uses
@@ -95,8 +94,7 @@ mpirun -np 2 ./main3d.gnu.MPI.ex icase_only=1 icase_n_cell=24 \
 ```
 
 `icase_solver` selects the nonlinear solver. `ne_newton_krylov` (default) and
-`ne_quasi_newton` use nonlinear elimination (Brunner, Haut & Nowak 2020,
-`papers/`): T is solved cell by cell for the current E, leaving a system in E
+`ne_quasi_newton` use nonlinear elimination (Brunner, Haut & Nowak 2020): T is solved cell by cell for the current E, leaving a system in E
 alone. `ne_newton_krylov` applies Jacobian-free Newton-Krylov to that reduced
 system; `ne_quasi_newton` is the paper's Algorithm 2 with frozen
 coefficients. `newton_krylov` is Jacobian-free Newton-Krylov on the coupled
@@ -106,9 +104,7 @@ previous step; if it fails, the step is retried from up to 20 damped
 linearized (Picard) predictor iterations. The default problem never needs
 this fallback; finer grids or larger time steps (e.g. `icase_n_cell=48`,
 `icase_dt=0.1`) do. The coupled solver matches `ne_newton_krylov` on the
-default problem. See
-`benchmarks/2026-10-27-linear-vs-nonlinear-elimination/RESULTS.md` and
-`benchmarks/2026-10-27-nonlinear-elimination/RESULTS.md`.
+default problem.
 
 ## Radiation-material solver and moving media
 
@@ -125,7 +121,7 @@ cell Levermore-Pomraning limiter with a harmonic or surface-opacity face
 average (clouds). The diffusion residual is evaluated with the same
 composite operator as the AMG preconditioner, so `mlabeclap_amg.cf_stencil`
 applies to both. The matter-radiation four-force is the mixed-frame
-form of He, Wibking & Krumholz (2024, `papers/stae1244.pdf`), Eqs. (3)-(4).
+form of He, Wibking & Krumholz (2024), Eqs. (3)-(4).
 The radiation flux includes the enthalpy advection v.(E I + P) with the
 Levermore Eddington tensor of the limiter; the material receives
 c G0 - v.G, so E + T loses the work done by the radiation force on the flow.
@@ -156,5 +152,3 @@ mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_newton_kry
 
 The defaults are optically thick (`vc.sigma0=1000`, `vc.opacity_power=3`);
 optically thin, limiter-dominated cases need the predictor fallback.
-
-See `benchmarks/2026-10-27-moving-medium/RESULTS.md`.

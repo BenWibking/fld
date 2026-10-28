@@ -32,24 +32,21 @@ actions remain matrix-free; matrix assembly is for preconditioning.
 Newton caches the accepted residual's scale-independent squared-norm sums
 and applies the current normalization after each `prepare`, eliminating one
 cloud norm reduction per Newton step without changing the line-search test.
-Cloud admissibility checks finite values and inclusive energy bounds in one
-local pass and one global reduction, instead of three global reductions.
+Newton admissibility checks that E and T are finite and positive (and E
+below `RadiationMaterialOptions::maximum_energy` when set).
 Cloud preparation computes only the maximum needed for normalization, saving
 another collective per Newton step. Cloning copies every valid and ghost
 cell directly, including unequal ghost widths, without first zeroing storage.
-Local checks are in `benchmarks/2026-09-27-min-clone/RESULTS.md`.
-See `benchmarks/2026-09-27-newton-collectives/RESULTS.md` for local checks.
 The cloud's fixed extinction is the radiation-material solver's opacity
 coefficient; its halos are filled once when it is set and reused throughout
 predictors, residual probes, and Newton preparation. Energy, temperature, and
 diffusion halos and numerical coefficients are refreshed on each evaluation.
-See `benchmarks/2026-09-27-extinction-ghosts/RESULTS.md`.
 All four jobs set `cloud_predict_first=0` to start Newton-Krylov from the
 initial state; predictors then run only if Newton fails.
 The local eight-rank linear case at `cloud_fine_n=128` converged with four
 Newton steps and 13 total Krylov iterations in 2.17 s whole-case wall,
 versus 23 total linear iterations and 2.66--2.73 s with one predictor.
-See `benchmarks/2026-09-27-linear-cloud-8rank/RESULTS.md`. Frontier-resolution
+Frontier-resolution
 iteration counts and timings remain to be measured.
 These measurements predate the unified radiation-material solver, which
 couples the material temperature to the cloud problem (one dt = 1e10
@@ -103,8 +100,6 @@ compares every copied face against the original `ParallelCopy` during both
 residual evaluation and matrix assembly;
 leave this verification disabled for timings because it performs extra copies
 and a checking reduction.
-Local assembly validation and message counts are recorded in
-`benchmarks/2026-09-27-packed-assembly/RESULTS.md`.
 All four jobs set `MPICH_OFI_CXI_COUNTER_REPORT=2`, which prints a summary of
 Cassini counters at `MPI_Finalize`. The counters span the whole MPI run, not
 individual AMG levels or solver phases. Compare pause cycles, PCIe blocked
