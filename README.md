@@ -103,9 +103,15 @@ its preconditioner. For both Newton-Krylov solvers, Newton starts from the
 previous step; if it fails, the step is retried from up to 20 damped
 linearized (Picard) predictor iterations. The default problem never needs
 this fallback. With a finer grid and larger time step (`icase_n_cell=48`
-`icase_dt=0.1`), `newton_krylov` needs it on 13 of 1000 steps and finishes,
-but `ne_newton_krylov` fails at step 10 even after the fallback. The coupled
+`icase_dt=0.1`), `newton_krylov` needs it on 13 of 1000 steps and
+`ne_newton_krylov` on 15; both finish with the same final state. The coupled
 solver matches `ne_newton_krylov` on the default problem.
+
+Newton converges when the scaled residual norm and the largest change, both
+relative to the field's maximum (E, and T for the coupled solver), fall
+below `nonlinear_tolerance`. A per-cell relative change would stall at
+round-off in cold cells far below the maximum, such as ahead of the ICASE
+radiation front.
 
 ## Radiation-material solver and moving media
 

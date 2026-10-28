@@ -1103,6 +1103,36 @@ rm_all_ranks (bool local)
     return result != 0;
 }
 
+// Largest |lhs - rhs| over uncovered valid cells.  Newton changes are this
+// divided by the norm scale, like the residual: a relative change per cell
+// stalls at round-off in cells far below the scale (e.g. ahead of a
+// radiation front).
+Real
+rm_maximum_difference (LevelData const& lhs, LevelData const& rhs,
+                       Vector<iMultiFab> const& masks)
+{
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(lhs.size()); ++level) {
+        for (MFIter mfi(*lhs[level]); mfi.isValid(); ++mfi) {
+            auto const x = lhs[level]->const_array(mfi);
+            auto const y = rhs[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                return {mask(i, j, k)
+                            ? amrex::Math::abs(x(i, j, k) - y(i, j, k))
+                            : Real(0)};
+            });
+        }
+    }
+    Real result = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceRealMax(result);
+    return result;
+}
+
 // Sum local dot products over ranks in one reduction, then divide by the
 // norm scale.
 void
@@ -1255,7 +1285,7 @@ class ReducedProblem
     }
     Real relative_change (State const& lhs, State const& rhs) const
     {
-        return composite_maximum_relative_change(lhs, rhs, m_impl.masks_);
+        return rm_maximum_difference(lhs, rhs, m_impl.masks_) / m_scale;
     }
 
   private:
@@ -1504,11 +1534,11 @@ class CoupledProblem
     Real relative_change (State const& lhs, State const& rhs) const
     {
         return amrex::max(
-            composite_maximum_relative_change(lhs.energy, rhs.energy,
-                                              m_impl.masks_),
-            composite_maximum_relative_change(lhs.temperature,
-                                              rhs.temperature,
-                                              m_impl.masks_));
+            rm_maximum_difference(lhs.energy, rhs.energy, m_impl.masks_) /
+                m_energy_scale,
+            rm_maximum_difference(lhs.temperature, rhs.temperature,
+                                  m_impl.masks_) /
+                m_temperature_scale);
     }
 
   private:
@@ -1693,8 +1723,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
             auto next = clone_level_data(state.energy);
             saxpy_level_data(next, Real(1), correction);
             average_down_hierarchy(next, hierarchy);
-            change = composite_maximum_relative_change(next, state.energy,
-                                                       masks_);
+            change = rm_maximum_difference(next, state.energy, masks_) /
+                     scale(state.energy, options.energy_scale_floor);
             copy_level_data(state.energy, next);
             ++step_nonlinear;
         }
