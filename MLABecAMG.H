@@ -14,7 +14,11 @@
 namespace fld_test
 {
 
-/** Cell-centered data for `a phi + b dphi/dn = f` Robin boundaries. */
+/** Data for `a phi + b dphi/dn = f` Robin boundaries: cell fields with at
+ *  least one ghost layer.  Each Robin face reads a, b, and f from the
+ *  exterior ghost cell across it (the convention of
+ *  amrex::MLABecLaplacian::setLevelBC), so the faces of an edge or corner
+ *  cell carry independent values. */
 struct RobinBCData
 {
     amrex::Vector<amrex::MultiFab const*> a;

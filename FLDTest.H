@@ -46,9 +46,11 @@ struct CloudResult
     amrex::Real maximum_energy = amrex::Real(0);
     amrex::Real final_nonlinear_change = amrex::Real(0);
     amrex::Real final_nonlinear_residual = amrex::Real(0);
+    int time_steps = 0;
     int nonlinear_iterations = 0;
     int total_newton_krylov_iterations = 0;
     int maximum_newton_krylov_iterations = 0;
+    int predictor_fallbacks = 0;
     amrex::Long mixed_cells = 0;
     amrex::Long cells = 0;
     SolverSummary solver;
@@ -98,6 +100,10 @@ void run_mms_convergence ();
 /** Grey FLD and material energy in a medium with a prescribed uniform
  *  velocity, to O(v/c); parameters under `vc.` (see MovingMedium.cpp). */
 void run_moving_medium ();
+
+// Operator-action, boundary, and hierarchy checks of MLABecLapAMG
+// (MLABecAMGTest.cpp); aborts on failure.
+void run_mlabeclap_amg_checks ();
 
 } // namespace fld_test
 

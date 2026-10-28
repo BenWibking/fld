@@ -16,14 +16,6 @@ using LevelData = amrex::Vector<std::unique_ptr<amrex::MultiFab>>;
 using FaceData = amrex::Vector<
     amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>;
 
-struct PhysicalBoundaryData
-{
-    amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> lo;
-    amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> hi;
-    amrex::Array<amrex::Real, AMREX_SPACEDIM> lo_value{};
-    amrex::Array<amrex::Real, AMREX_SPACEDIM> hi_value{};
-};
-
 [[nodiscard]] LevelData make_cell_data (DiffusionHierarchy const& hierarchy,
                                         int ncomp, int nghost);
 
@@ -92,21 +84,6 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] bool composite_all_in_range (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks,
     amrex::Real minimum, amrex::Real maximum);
-
-// Set extinction_ghosts_ready only when its halos match its current valid
-// values and hierarchy. The default refreshes halos for general callers.
-void compute_diffusion (DiffusionHierarchy const& hierarchy,
-                        LevelData& energy, LevelData& extinction,
-                        LevelData& diffusion,
-                        PhysicalBoundaryData const& boundary, bool limited,
-                        amrex::Real* maximum_flux_fraction = nullptr,
-                        bool extinction_ghosts_ready = false);
-
-void fill_face_coefficients (DiffusionHierarchy const& hierarchy,
-                             LevelData& diffusion, LevelData* extinction,
-                             FaceData& face_coefficients,
-                             bool use_surface_opacity,
-                             bool extinction_ghosts_ready = false);
 
 } // namespace fld_test
 

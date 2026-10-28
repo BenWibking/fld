@@ -7,10 +7,12 @@
 #include <AMReX_Arena.H>
 #include <AMReX_BoxIterator.H>
 #include <AMReX_MFIter.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Reduce.H>
 
 #include <algorithm>
+#include <string>
 
 namespace fld_test
 {
@@ -48,150 +50,153 @@ fill_constant_faces (FaceData& faces, Real value)
     }
 }
 
+// A composite cell on the finest index space: [lo, hi) in finest cells.
 struct ReferenceCell
 {
     int level = -1;
     int grid = -1;
     IntVect index = IntVect::TheZeroVector();
-    int xlo = 0;
-    int xhi = 0;
-    int ylo = 0;
-    int yhi = 0;
-    Real x = Real(0);
-    Real y = Real(0);
+    IntVect lo = IntVect::TheZeroVector();
+    IntVect hi = IntVect::TheZeroVector();
     Real volume = Real(0);
     Real value = Real(0);
     Real acoef = Real(0);
 };
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
-operator_test_value (Real x, Real y) noexcept
+operator_test_value (Real x, Real y, Real z) noexcept
 {
     return Real(0.7) + Real(0.6) * x - Real(0.2) * y +
-           Real(0.15) * x * y;
+           Real(0.15) * x * y + Real(0.1) * z - Real(0.05) * x * z;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
-operator_test_acoef (Real x, Real y) noexcept
+operator_test_acoef (Real x, Real y, Real z) noexcept
 {
-    return Real(1) + Real(0.1) * x + Real(0.2) * y;
+    return Real(1) + Real(0.1) * x + Real(0.2) * y + Real(0.05) * z;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
-operator_test_bcoef (Real x, Real y) noexcept
+operator_test_bcoef (Real x, Real y, Real z) noexcept
 {
-    return Real(0.8) + Real(0.3) * x + Real(0.1) * y;
+    return Real(0.8) + Real(0.3) * x + Real(0.1) * y + Real(0.2) * z;
 }
 
-Vector<ReferenceCell>
-make_reference_cells (DiffusionHierarchy const& hierarchy)
+// The uncovered cells of every level, and for each finest cell the index of
+// the composite cell containing it.
+struct ReferenceGrid
 {
+    int finest_cells = 0;
+    Vector<ReferenceCell> cells;
+    Vector<int> owner;
+
+    [[nodiscard]] int owner_of (IntVect const& fine) const
+    {
+        return owner[(fine[2] * finest_cells + fine[1]) * finest_cells +
+                     fine[0]];
+    }
+};
+
+ReferenceGrid
+make_reference_grid (DiffusionHierarchy const& hierarchy)
+{
+    static_assert(AMREX_SPACEDIM == 3);
     int const nlevels = static_cast<int>(hierarchy.geom.size());
-    int const finest_cells =
-        hierarchy.geom.back().Domain().length(0);
+    ReferenceGrid result;
+    result.finest_cells = hierarchy.geom.back().Domain().length(0);
+    int const n = result.finest_cells;
     Vector<BoxArray> covered(nlevels - 1);
     for (int level = 0; level + 1 < nlevels; ++level) {
         covered[level] = hierarchy.grids[level + 1];
         covered[level].coarsen(hierarchy.ref_ratio[level]);
     }
-
-    Vector<ReferenceCell> result;
+    result.owner.assign(std::size_t(n) * n * n, -1);
     for (int level = 0; level < nlevels; ++level) {
         int const level_cells = hierarchy.geom[level].Domain().length(0);
-        AMREX_ALWAYS_ASSERT(finest_cells % level_cells == 0);
-        int const scale = finest_cells / level_cells;
+        AMREX_ALWAYS_ASSERT(n % level_cells == 0);
+        int const scale = n / level_cells;
         auto const dx = hierarchy.geom[level].CellSizeArray();
         for (int grid = 0; grid < hierarchy.grids[level].size(); ++grid) {
             for (BoxIterator bit(hierarchy.grids[level][grid]); bit.ok();
                  ++bit) {
                 IntVect const iv = bit();
-                bool is_covered = false;
-                if (level + 1 < nlevels) {
-                    for (int fine_grid = 0;
-                         fine_grid < covered[level].size(); ++fine_grid) {
-                        is_covered = is_covered ||
-                                     covered[level][fine_grid].contains(iv);
-                    }
-                }
-                if (is_covered) {
+                if (level + 1 < nlevels && covered[level].contains(iv)) {
                     continue;
                 }
-                int const xlo = iv[0] * scale;
-                int const ylo = iv[1] * scale;
-                Real const x = (Real(xlo) + Real(0.5 * scale)) /
-                               Real(finest_cells);
-                Real const y = (Real(ylo) + Real(0.5 * scale)) /
-                               Real(finest_cells);
-                result.push_back(ReferenceCell{
-                    level, grid, iv, xlo, xlo + scale, ylo, ylo + scale,
-                    x, y, dx[0] * dx[1], operator_test_value(x, y),
-                    operator_test_acoef(x, y)});
+                ReferenceCell cell;
+                cell.level = level;
+                cell.grid = grid;
+                cell.index = iv;
+                cell.lo = iv * scale;
+                cell.hi = cell.lo + IntVect(scale);
+                Real center[3];
+                for (int d = 0; d < 3; ++d) {
+                    center[d] = (Real(cell.lo[d]) + Real(0.5 * scale)) /
+                                Real(n);
+                }
+                cell.volume = dx[0] * dx[1] * dx[2];
+                cell.value =
+                    operator_test_value(center[0], center[1], center[2]);
+                cell.acoef =
+                    operator_test_acoef(center[0], center[1], center[2]);
+                int const id = static_cast<int>(result.cells.size());
+                result.cells.push_back(cell);
+                for (BoxIterator fine(Box(cell.lo, cell.hi - IntVect(1)));
+                     fine.ok(); ++fine) {
+                    IntVect const f = fine();
+                    result.owner[(f[2] * n + f[1]) * n + f[0]] = id;
+                }
             }
         }
+    }
+    for (int const id : result.owner) {
+        AMREX_ALWAYS_ASSERT(id >= 0);
     }
     return result;
 }
 
+// Two-point composite flux: across each finest sub-face of the source's
+// faces, b at the sub-face center times (phi_s - phi_t) over the distance
+// between the two cell centers.  b is linear, so summing sub-faces equals
+// b at the center of each coarse-fine overlap times its area.  Physical
+// faces are homogeneous Neumann.
 Real
 reference_operator_action (ReferenceCell const& source,
-                           Vector<ReferenceCell> const& cells,
-                           int finest_cells, Real ascalar, Real bscalar)
+                           ReferenceGrid const& grid, Real ascalar,
+                           Real bscalar)
 {
+    int const n = grid.finest_cells;
+    Real const sub_area = Real(1) / (Real(n) * Real(n));
     Real flux_sum = Real(0);
-    for (auto const& target : cells) {
-        if (&target == &source) {
-            continue;
-        }
-        int direction = -1;
-        int overlap = 0;
-        int face_coordinate = 0;
-        int transverse_lo = 0;
-        int transverse_hi = 0;
-        int source_width = 0;
-        int target_width = 0;
-        if (source.xhi == target.xlo || source.xlo == target.xhi) {
-            overlap = std::max(
-                0, std::min(source.yhi, target.yhi) -
-                       std::max(source.ylo, target.ylo));
-            if (overlap > 0) {
-                direction = 0;
-                face_coordinate =
-                    source.xhi == target.xlo ? source.xhi : source.xlo;
-                transverse_lo = std::max(source.ylo, target.ylo);
-                transverse_hi = std::min(source.yhi, target.yhi);
-                source_width = source.xhi - source.xlo;
-                target_width = target.xhi - target.xlo;
-            }
-        } else if (source.yhi == target.ylo ||
-                   source.ylo == target.yhi) {
-            overlap = std::max(
-                0, std::min(source.xhi, target.xhi) -
-                       std::max(source.xlo, target.xlo));
-            if (overlap > 0) {
-                direction = 1;
-                face_coordinate =
-                    source.yhi == target.ylo ? source.yhi : source.ylo;
-                transverse_lo = std::max(source.xlo, target.xlo);
-                transverse_hi = std::min(source.xhi, target.xhi);
-                source_width = source.yhi - source.ylo;
-                target_width = target.yhi - target.ylo;
+    for (int d = 0; d < 3; ++d) {
+        int const d1 = (d + 1) % 3;
+        int const d2 = (d + 2) % 3;
+        for (int side = 0; side < 2; ++side) {
+            int const across = side == 0 ? source.lo[d] - 1 : source.hi[d];
+            if (across < 0 || across >= n) { continue; }
+            Real const normal =
+                Real(side == 0 ? source.lo[d] : source.hi[d]) / Real(n);
+            for (int a = source.lo[d1]; a < source.hi[d1]; ++a) {
+                for (int b = source.lo[d2]; b < source.hi[d2]; ++b) {
+                    IntVect fine;
+                    fine[d] = across;
+                    fine[d1] = a;
+                    fine[d2] = b;
+                    auto const& target = grid.cells[grid.owner_of(fine)];
+                    Real point[3];
+                    point[d] = normal;
+                    point[d1] = (Real(a) + Real(0.5)) / Real(n);
+                    point[d2] = (Real(b) + Real(0.5)) / Real(n);
+                    Real const distance =
+                        Real(source.hi[d] - source.lo[d] + target.hi[d] -
+                             target.lo[d]) / (Real(2) * Real(n));
+                    flux_sum += operator_test_bcoef(point[0], point[1],
+                                                    point[2]) *
+                                sub_area / distance *
+                                (source.value - target.value);
+                }
             }
         }
-        if (direction < 0) {
-            continue;
-        }
-
-        Real const normal = Real(face_coordinate) / Real(finest_cells);
-        Real const transverse =
-            Real(transverse_lo + transverse_hi) /
-            (Real(2) * Real(finest_cells));
-        Real const face_x = direction == 0 ? normal : transverse;
-        Real const face_y = direction == 0 ? transverse : normal;
-        Real const area = Real(overlap) / Real(finest_cells);
-        Real const distance = Real(source_width + target_width) /
-                              (Real(2) * Real(finest_cells));
-        flux_sum += operator_test_bcoef(face_x, face_y) * area / distance *
-                    (source.value - target.value);
     }
     return ascalar * source.acoef * source.value +
            bscalar * flux_sum / source.volume;
@@ -212,12 +217,11 @@ fill_operator_test_fields (DiffusionHierarchy const& hierarchy,
             ParallelFor(mfi.validbox(),
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
             {
-                Real const x =
-                    problo[0] + (Real(i) + Real(0.5)) * dx[0];
-                Real const y =
-                    problo[1] + (Real(j) + Real(0.5)) * dx[1];
-                phi(i, j, k) = operator_test_value(x, y);
-                a(i, j, k) = operator_test_acoef(x, y);
+                Real const x = problo[0] + (Real(i) + Real(0.5)) * dx[0];
+                Real const y = problo[1] + (Real(j) + Real(0.5)) * dx[1];
+                Real const z = problo[2] + (Real(k) + Real(0.5)) * dx[2];
+                phi(i, j, k) = operator_test_value(x, y, z);
+                a(i, j, k) = operator_test_acoef(x, y, z);
             });
         }
         for (int direction = 0; direction < AMREX_SPACEDIM; ++direction) {
@@ -226,18 +230,45 @@ fill_operator_test_fields (DiffusionHierarchy const& hierarchy,
                 ParallelFor(mfi.validbox(),
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    Real const x = problo[0] +
-                        (Real(i) + (direction == 0 ? Real(0) : Real(0.5))) *
-                            dx[0];
-                    Real const y = problo[1] +
-                        (Real(j) + (direction == 1 ? Real(0) : Real(0.5))) *
-                            dx[1];
-                    b(i, j, k) = operator_test_bcoef(x, y);
+                    Real const offset[3] = {
+                        direction == 0 ? Real(0) : Real(0.5),
+                        direction == 1 ? Real(0) : Real(0.5),
+                        direction == 2 ? Real(0) : Real(0.5)};
+                    Real const x = problo[0] + (Real(i) + offset[0]) * dx[0];
+                    Real const y = problo[1] + (Real(j) + offset[1]) * dx[1];
+                    Real const z = problo[2] + (Real(k) + offset[2]) * dx[2];
+                    b(i, j, k) = operator_test_bcoef(x, y, z);
                 });
             }
         }
     }
 }
+
+// Runs the enclosed code with mlabeclap_amg.cf_stencil set, restoring the
+// previous setting afterwards.
+class ScopedCFStencil
+{
+  public:
+    explicit ScopedCFStencil (std::string const& stencil)
+    {
+        ParmParse pp("mlabeclap_amg");
+        m_had_previous = pp.query("cf_stencil", m_previous) != 0;
+        pp.remove("cf_stencil");
+        pp.add("cf_stencil", stencil);
+    }
+    ~ScopedCFStencil ()
+    {
+        ParmParse pp("mlabeclap_amg");
+        pp.remove("cf_stencil");
+        if (m_had_previous) { pp.add("cf_stencil", m_previous); }
+    }
+    ScopedCFStencil (ScopedCFStencil const&) = delete;
+    ScopedCFStencil& operator= (ScopedCFStencil const&) = delete;
+
+  private:
+    std::string m_previous;
+    bool m_had_previous = false;
+};
 
 void
 check_operator_action (DiffusionHierarchy const& hierarchy)
@@ -253,8 +284,7 @@ check_operator_action (DiffusionHierarchy const& hierarchy)
     set_level_data(expected, Real(0));
     fill_operator_test_fields(hierarchy, input, acoef, bcoef);
 
-    auto const cells = make_reference_cells(hierarchy);
-    int const finest_cells = hierarchy.geom.back().Domain().length(0);
+    auto const reference = make_reference_grid(hierarchy);
     LevelData host_expected(hierarchy.geom.size());
     MFInfo const pinned_info = MFInfo().SetArena(The_Pinned_Arena());
     for (int level = 0; level < static_cast<int>(hierarchy.geom.size());
@@ -265,11 +295,10 @@ check_operator_action (DiffusionHierarchy const& hierarchy)
         host_expected[level]->setVal(Real(0));
     }
     int const myproc = ParallelDescriptor::MyProc();
-    for (auto const& cell : cells) {
+    for (auto const& cell : reference.cells) {
         if (hierarchy.dmap[cell.level][cell.grid] == myproc) {
             (*host_expected[cell.level])[cell.grid](cell.index) =
-                reference_operator_action(cell, cells, finest_cells,
-                                          ascalar, bscalar);
+                reference_operator_action(cell, reference, ascalar, bscalar);
         }
     }
     for (int level = 0; level < static_cast<int>(hierarchy.geom.size());
@@ -277,6 +306,8 @@ check_operator_action (DiffusionHierarchy const& hierarchy)
         MultiFab::Copy(*expected[level], *host_expected[level], 0, 0, 1, 0);
     }
 
+    // The reference is the two-point coarse-fine flux.
+    ScopedCFStencil const two_point("two_point");
     auto const neumann = all_bc(LinOpBCType::Neumann);
     MLABecLapAMG solver(hierarchy.geom, hierarchy.grids, hierarchy.dmap);
     solver.setup(ascalar, bscalar, get_level_const_ptrs(acoef),
@@ -501,17 +532,51 @@ check_robin_constant ()
     auto solution = make_cell_data(hierarchy, 1, 1);
     auto rhs = make_cell_data(hierarchy, 1, 0);
     auto acoef = make_cell_data(hierarchy, 1, 0);
-    auto robin_a = make_cell_data(hierarchy, 1, 0);
-    auto robin_b = make_cell_data(hierarchy, 1, 0);
-    auto robin_f = make_cell_data(hierarchy, 1, 0);
+    auto robin_a = make_cell_data(hierarchy, 1, 1);
+    auto robin_b = make_cell_data(hierarchy, 1, 1);
+    auto robin_f = make_cell_data(hierarchy, 1, 1);
     auto exact = make_cell_data(hierarchy, 1, 0);
     auto bcoef = make_face_data(hierarchy);
     set_level_data(solution, Real(0));
     set_level_data(rhs, Real(0));
     set_level_data(acoef, Real(1));
+    // Different a and b on every face with f = 2 a, so phi = 2 is exact.
+    // Robin data are read from the exterior ghost cell of each face; the
+    // valid cells hold a = 1, f = 0, which would give phi = 0, so reading
+    // the boundary cell, or another face's ghost at an edge or corner,
+    // fails the check.
     set_level_data(robin_a, Real(1));
     set_level_data(robin_b, Real(1));
-    set_level_data(robin_f, Real(2));
+    set_level_data(robin_f, Real(0));
+    {
+        Box const domain = hierarchy.geom[0].Domain();
+        for (MFIter mfi(*robin_a[0]); mfi.isValid(); ++mfi) {
+            auto const a = robin_a[0]->array(mfi);
+            auto const b = robin_b[0]->array(mfi);
+            auto const f = robin_f[0]->array(mfi);
+            ParallelFor(mfi.fabbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                IntVect const g(AMREX_D_DECL(i, j, k));
+                int face = -1;
+                int outside = 0;
+                for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                    if (g[d] < domain.smallEnd(d)) {
+                        face = 2 * d;
+                        ++outside;
+                    } else if (g[d] > domain.bigEnd(d)) {
+                        face = 2 * d + 1;
+                        ++outside;
+                    }
+                }
+                if (outside != 1) { return; }
+                Real const aa = Real(0.25) + Real(0.25) * Real(face);
+                a(g) = aa;
+                b(g) = Real(0.5) + Real(0.1) * Real(face);
+                f(g) = Real(2) * aa;
+            });
+        }
+    }
     set_level_data(exact, Real(2));
     fill_constant_faces(bcoef, Real(1));
 

@@ -21,9 +21,18 @@ multiple of 32 for AMR. The 74 sphere centroids are fixed in
 relaxed Penrose vertex patch. See
 `benchmarks/penrose-cloud-relaxation/RESULTS.md` for geometry and run results.
 
-`cloud_predictor_steps` limits the damped predictor solves before Newton-Krylov
-(default 20). Set it to `0` to skip predictors; negative counts are rejected.
-Set `cloud_flux_limiter=0` for the linear diffusion problem.
+The clouds run on the radiation-material solver below with v = 0: the
+material temperature is coupled with opacity equal to the extinction, and one
+backward Euler step of `cloud_dt_initial=1e10` from damped Picard predictor
+iterations reaches the steady state, where T = E^(1/4) and
+-div D grad E = 0 (the radiation-only cloud problem). The cell
+Levermore-Pomraning limiter, surface-opacity face coefficients, and Robin
+faces 1/2 E + D dE/dn = 1/2 E_eq keep the discretization of the earlier
+radiation-only solver, whose transmissions it reproduces. `cloud_solver`
+selects `newton_krylov` (default), `ne_newton_krylov`, or `ne_quasi_newton`;
+`cloud_dt_growth` and `cloud_dt_final` turn the step into a geometric ramp
+(much slower); `cloud_predict_first=0` runs the predictors only after a
+Newton failure. Set `cloud_flux_limiter=0` for the linear diffusion problem.
 
 For the scaling benchmark, rebuild the preconditioning matrix and AMG
 hierarchy at every Newton step, including when the limiter is disabled.
@@ -49,6 +58,14 @@ each fine cell to its coarse neighbor with a symmetric two-point flux, which
 is inconsistent at the interface and only first-order accurate. Run
 `mms_only=1 mms.n_cells=16 32 64` for a manufactured-solution convergence
 study of either stencil; see `benchmarks/2026-10-27-cf-stencil/RESULTS.md`.
+
+`amg_checks=1` runs the `MLABecLapAMG` unit checks (`MLABecAMGTest.cpp`):
+operator action against an independent two-point composite reference on
+uniform and AMR hierarchies, coarse-fine ghost filling, constant and linear
+solutions with Neumann, Dirichlet, and Robin boundaries (per-face Robin
+coefficients, read from each face's exterior ghost cell), and solver
+lifecycle. Run it under both `mlabeclap_amg.cf_stencil` values; the
+operator-action check always uses `two_point`.
 
 ## ICASE 2001-12 radiation diffusion
 
@@ -86,33 +103,51 @@ default problem. See
 `benchmarks/2026-10-27-linear-vs-nonlinear-elimination/RESULTS.md` and
 `benchmarks/2026-10-27-nonlinear-elimination/RESULTS.md`.
 
-## Moving medium to O(v/c)
+## Radiation-material solver and moving media
 
-`vc_only=1` runs grey flux-limited diffusion coupled to the material energy
-in a medium with a prescribed uniform velocity `vc.velocity` (in units of c),
-on the periodic unit cube, to first order in v/c. The matter-radiation
-four-force is the mixed-frame form of He, Wibking & Krumholz (2024,
-`papers/stae1244.pdf`), Eqs. (3)-(4). The radiation flux includes the
-enthalpy advection v.(E I + P) with the Levermore Eddington tensor of the
-limiter; the material receives c G0 - v.G, so E + T loses the work done by
-the radiation force on the flow. Material advection is explicit and operator
-split before the implicit update. Opacity is `vc.sigma0 * T^-vc.opacity_power`.
+The clouds, ICASE, the advecting pulse, and the moving-medium MMS all use one
+solver, `RadiationMaterialSolver` (`RadiationMaterial.H`): grey flux-limited
+diffusion coupled to the material energy on a composite AMR hierarchy, with
+opacity `kappa * T^-p` (`kappa` a cell field), per-face periodic, Neumann, or
+Robin boundaries (b = 1/(6 sigma), the Marshak condition with a = 1/4, or
+b = D), optional manufactured sources, and an optional uniform velocity to
+first order in v/c (periodic domain, one level). The face diffusion
+coefficient is selectable (`DiffusionCoefficient`): the face limiter
+1/(3 sigma + |grad E|/E) with a harmonic mean (ICASE, moving media), or the
+cell Levermore-Pomraning limiter with a harmonic or surface-opacity face
+average (clouds). The diffusion residual is evaluated with the same
+composite operator as the AMG preconditioner, so `mlabeclap_amg.cf_stencil`
+applies to both. The matter-radiation four-force is the mixed-frame
+form of He, Wibking & Krumholz (2024, `papers/stae1244.pdf`), Eqs. (3)-(4).
+The radiation flux includes the enthalpy advection v.(E I + P) with the
+Levermore Eddington tensor of the limiter; the material receives
+c G0 - v.G, so E + T loses the work done by the radiation force on the flow.
+Material advection is explicit and operator split, so dt must satisfy
+dt * sum |v_d|/dx_d <= 1; a nonzero velocity needs a periodic domain.
 
-`vc.solver` selects `newton_krylov` (default; coupled, with a
-Schur-complement preconditioner) or `ne_lagged` (nonlinear elimination with
-the work term lagged over an outer iteration). `vc.test=pulse` advects an
-equilibrium temperature pulse;
+Its three nonlinear solvers are the ones described under ICASE:
+`newton_krylov` (coupled, Schur-complement preconditioner),
+`ne_newton_krylov` (nonlinear elimination; with a velocity, the work term,
+which couples neighboring cells, is lagged over an outer iteration), and
+`ne_quasi_newton`. All of them retry a failed step from up to 20 damped
+linearized (Picard) predictor iterations: with the opacity and diffusion
+coefficient frozen, a converged E solve and then a diagonal T update at the
+new E. `RadiationMaterialOptions::maximum_energy` rejects Newton line-search
+candidates above a bound on E; ICASE sets 8 (the inflow bounds E by 4),
+without which `ne_newton_krylov` fails at `icase_dt=0.1`.
+
+`vc_only=1` runs the moving-medium problems on the periodic unit cube with
+velocity `vc.velocity` (in units of c) and opacity
+`vc.sigma0 * T^-vc.opacity_power`; `vc.solver` selects the solver (default
+`newton_krylov`). `vc.test=pulse` advects an equilibrium temperature pulse;
 `vc.test=mms` runs a steady manufactured solution (requires `vc.limiter=0`;
 `vc.advection=centered` gives second order, `upwind` first order):
 
 ```sh
-mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_lagged
+mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_newton_krylov
 ```
 
-The defaults are optically thick (`vc.sigma0=1000`, `vc.opacity_power=3`).
-As for ICASE, if Newton fails the step is retried from up to 20 damped
-frozen-coefficient (Picard) predictor iterations; optically thin,
-limiter-dominated cases need this. Material advection is explicit, so
-`vc.dt` must satisfy dt * sum |v_d|/dx_d <= 1.
+The defaults are optically thick (`vc.sigma0=1000`, `vc.opacity_power=3`);
+optically thin, limiter-dominated cases need the predictor fallback.
 
 See `benchmarks/2026-10-27-moving-medium/RESULTS.md`.

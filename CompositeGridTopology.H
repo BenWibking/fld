@@ -62,6 +62,8 @@ class CompositeGridTopology
     struct BoundaryData
     {
         amrex::Vector<amrex::MultiFab const*> level;
+        // Robin a, b, f, read like `level` from the exterior ghost cell of
+        // each physical face.
         amrex::Vector<amrex::MultiFab const*> robin_a;
         amrex::Vector<amrex::MultiFab const*> robin_b;
         amrex::Vector<amrex::MultiFab const*> robin_f;

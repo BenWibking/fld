@@ -48,6 +48,14 @@ main (int argc, char* argv[])
         int mms_only = 0;
         pp.query("mms_only", mms_only);
 
+        int amg_checks = 0;
+        pp.query("amg_checks", amg_checks);
+        if (amg_checks != 0) {
+            run_mlabeclap_amg_checks();
+            amrex::Finalize();
+            return 0;
+        }
+
         int vc_only = 0;
         pp.query("vc_only", vc_only);
         if (vc_only != 0) {
@@ -140,9 +148,11 @@ main (int argc, char* argv[])
                 << result.cloudy_volume_relative_error
                 << ", transmission=" << result.transmission
                 << ", balance error=" << result.balance_error
+                << ", time steps=" << result.time_steps
                 << ", Newton/Krylov iterations="
                 << result.nonlinear_iterations << "/"
                 << result.total_newton_krylov_iterations
+                << ", predictor fallbacks=" << result.predictor_fallbacks
                 << ", nonlinear residual="
                 << result.final_nonlinear_residual
                 << ", E range=[" << result.minimum_energy << ","

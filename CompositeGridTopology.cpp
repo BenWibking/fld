@@ -898,11 +898,14 @@ CompositeGridTopology::assemble (
         } else {
             AMREX_ALWAYS_ASSERT(is_robin(type) && have_robin);
             Real const aa = boundary.robin_a[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             Real const bb = boundary.robin_b[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             Real const ff = boundary.robin_f[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             AMREX_ALWAYS_ASSERT(aa >= Real(0) && bb >= Real(0) &&
                                 aa + bb > Real(0));
             Real const scale = bscalar * k * physical.area /
@@ -1048,18 +1051,18 @@ CompositeGridTopology::residualWithoutAssembly (
         if (have_robin) {
             if (!host_robin_a[level]) {
                 host_robin_a[level] =
-                    make_host_buffer(*boundary.robin_a[level], 0);
+                    make_host_buffer(*boundary.robin_a[level], 1);
                 host_robin_b[level] =
-                    make_host_buffer(*boundary.robin_b[level], 0);
+                    make_host_buffer(*boundary.robin_b[level], 1);
                 host_robin_f[level] =
-                    make_host_buffer(*boundary.robin_f[level], 0);
+                    make_host_buffer(*boundary.robin_f[level], 1);
             }
-            stage_host(*host_robin_a[level], *boundary.robin_a[level], 0,
-                       periodicity);
-            stage_host(*host_robin_b[level], *boundary.robin_b[level], 0,
-                       periodicity);
-            stage_host(*host_robin_f[level], *boundary.robin_f[level], 0,
-                       periodicity);
+            stage_host(*host_robin_a[level], *boundary.robin_a[level], 1,
+                       periodicity, 1);
+            stage_host(*host_robin_b[level], *boundary.robin_b[level], 1,
+                       periodicity, 1);
+            stage_host(*host_robin_f[level], *boundary.robin_f[level], 1,
+                       periodicity, 1);
         }
 #endif
     }
@@ -1271,11 +1274,14 @@ CompositeGridTopology::residualWithoutAssembly (
         } else {
             AMREX_ALWAYS_ASSERT(is_robin(type) && have_robin);
             Real const aa = robin_a_values[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             Real const bb = robin_b_values[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             Real const ff = robin_f_values[physical.level]
-                                ->atLocalIdx(cell.local_grid)(physical.cell);
+                                ->atLocalIdx(cell.local_grid)(
+                                    physical.exterior);
             AMREX_ALWAYS_ASSERT(aa >= Real(0) && bb >= Real(0) &&
                                 aa + bb > Real(0));
             Real const scale = bscalar * k * physical.area /

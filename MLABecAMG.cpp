@@ -59,33 +59,17 @@ stage_multifab (MultiFab const& source, int nghost,
     return result;
 }
 
+// Robin data for MLABecLaplacian, which reads them from the exterior ghost
+// cells like this wrapper does.
 std::unique_ptr<MultiFab>
 stage_robin_coefficient (MultiFab const& source, Geometry const& geom)
 {
+    AMREX_ALWAYS_ASSERT(source.nGrow() >= 1);
     auto result = std::make_unique<MultiFab>(
         source.boxArray(), source.DistributionMap(), source.nComp(), 1);
     result->setVal(Real(0));
-    result->ParallelCopy(source, 0, 0, source.nComp(), IntVect(0), IntVect(1),
+    result->ParallelCopy(source, 0, 0, source.nComp(), IntVect(1), IntVect(1),
                          geom.periodicity());
-    Box const domain = geom.Domain();
-    for (MFIter mfi(*result); mfi.isValid(); ++mfi) {
-        Box const exterior = grow(mfi.validbox(), 1) & mfi.fabbox();
-        auto const values = result->array(mfi);
-        ParallelFor(exterior, source.nComp(),
-        [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
-        {
-            IntVect const cell{
-                AMREX_D_DECL(amrex::max(domain.smallEnd(0),
-                                        amrex::min(domain.bigEnd(0), i)),
-                             amrex::max(domain.smallEnd(1),
-                                        amrex::min(domain.bigEnd(1), j)),
-                             amrex::max(domain.smallEnd(2),
-                                        amrex::min(domain.bigEnd(2), k)))};
-            if (!domain.contains(IntVect{AMREX_D_DECL(i, j, k)})) {
-                values(i, j, k, n) = values(cell, n);
-            }
-        });
-    }
     Gpu::streamSynchronize();
     return result;
 }
@@ -504,6 +488,12 @@ struct MLABecLapAMG::Impl
                 AMREX_ALWAYS_ASSERT(robin.a[level]->nComp() == 1 &&
                                     robin.b[level]->nComp() == 1 &&
                                     robin.f[level]->nComp() == 1);
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    robin.a[level]->nGrow() >= 1 &&
+                        robin.b[level]->nGrow() >= 1 &&
+                        robin.f[level]->nGrow() >= 1,
+                    "Robin data need one ghost layer: each face reads its "
+                    "exterior ghost cell");
             }
         }
     }
@@ -634,11 +624,11 @@ struct MLABecLapAMG::Impl
             }
             if (have_robin) {
                 robin_a[level] = stage_multifab(
-                    *robin_input.a[level], 0, geom[level].periodicity());
+                    *robin_input.a[level], 1, geom[level].periodicity());
                 robin_b[level] = stage_multifab(
-                    *robin_input.b[level], 0, geom[level].periodicity());
+                    *robin_input.b[level], 1, geom[level].periodicity());
                 robin_f[level] = stage_multifab(
-                    *robin_input.f[level], 0, geom[level].periodicity());
+                    *robin_input.f[level], 1, geom[level].periodicity());
             }
         }
 
