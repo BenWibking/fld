@@ -37,8 +37,8 @@ radiation-only solver, whose transmissions it reproduces. `cloud_solver`
 selects `newton_krylov` (default), `ne_newton_krylov`, or `ne_quasi_newton`;
 `cloud_dt_growth` and `cloud_dt_final` turn the step into a geometric ramp
 (much slower); `cloud_predict_first=0` runs the predictors only after a
-Newton failure; `cloud_eisenstat_walker=1` uses Eisenstat-Walker GMRES
-tolerances. `cloud_iteration_output=1` also prints GMRES iterations. Set `cloud_flux_limiter=0` for the linear diffusion problem.
+Newton failure (with the default, a failure is retried without them);
+`cloud_eisenstat_walker=1` uses Eisenstat-Walker GMRES tolerances. `cloud_iteration_output=1` also prints GMRES iterations. Set `cloud_flux_limiter=0` for the linear diffusion problem.
 
 For the scaling benchmark, rebuild the preconditioning matrix and AMG
 hierarchy at every Newton step, including when the limiter is disabled.
@@ -102,9 +102,10 @@ coefficients. `newton_krylov` is Jacobian-free Newton-Krylov on the coupled
 its preconditioner. For both Newton-Krylov solvers, Newton starts from the
 previous step; if it fails, the step is retried from up to 20 damped
 linearized (Picard) predictor iterations. The default problem never needs
-this fallback; finer grids or larger time steps (e.g. `icase_n_cell=48`,
-`icase_dt=0.1`) do. The coupled solver matches `ne_newton_krylov` on the
-default problem.
+this fallback. With a finer grid and larger time step (`icase_n_cell=48`
+`icase_dt=0.1`), `newton_krylov` needs it on 13 of 1000 steps and finishes,
+but `ne_newton_krylov` fails at step 10 even after the fallback. The coupled
+solver matches `ne_newton_krylov` on the default problem.
 
 ## Radiation-material solver and moving media
 

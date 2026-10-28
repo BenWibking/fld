@@ -21,9 +21,9 @@ struct NewtonKrylovOptions
     amrex::Real nonlinear_tolerance = amrex::Real(1.e-7);
     amrex::Real linear_tolerance = amrex::Real(1.e-4);
     bool eisenstat_walker = false;
-    // When false, a failed linear solve or line search returns a result
-    // with converged = false (the state is left at the last accepted
-    // iterate) instead of aborting.
+    // When false, a failed line search returns a result with converged =
+    // false (the state is left at the last accepted iterate) instead of
+    // aborting.  An unconverged linear solve is not a failure by itself.
     bool abort_on_failure = true;
     amrex::Real ew_initial_tolerance = amrex::Real(0.5);
     amrex::Real ew_maximum_tolerance = amrex::Real(0.9);
@@ -176,14 +176,9 @@ template <typename Problem> class NewtonKrylovSolver
             result.total_linear_iterations += gmres.getNumIters();
             result.maximum_linear_iterations = amrex::max(
                 result.maximum_linear_iterations, gmres.getNumIters());
-            if (gmres.getStatus() != 0 && !m_options.abort_on_failure) {
-                return result;
-            }
-            std::string const linear_failure =
-                m_options.problem_name +
-                " Newton linear solve did not converge";
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(gmres.getStatus() == 0,
-                                             linear_failure.c_str());
+            // An unconverged GMRES correction still goes to the line search,
+            // which rejects it if it is not a descent direction.
+            bool const linear_converged = gmres.getStatus() == 0;
 
             // The residual is unchanged, but prepare may change the norm's
             // scaling weights. Reweight its cached global sums locally.
@@ -230,7 +225,11 @@ template <typename Problem> class NewtonKrylovSolver
                 return result;
             }
             std::string const line_search_failure =
-                m_options.problem_name + " Newton line search failed";
+                m_options.problem_name +
+                (linear_converged
+                     ? " Newton line search failed"
+                     : " Newton linear solve did not converge, and the "
+                       "line search failed");
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(accepted,
                                              line_search_failure.c_str());
 

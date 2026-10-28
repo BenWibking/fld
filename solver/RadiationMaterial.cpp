@@ -562,6 +562,13 @@ struct RadiationMaterialSolver::Impl
     void load_state (LevelData const& e, LevelData const& t)
     {
         copy_level_data(energy, e);
+        load_loaded_energy(t);
+    }
+
+    // load_state with E already copied into `energy`, as eliminate()
+    // leaves it.
+    void load_loaded_energy (LevelData const& t)
+    {
         copy_level_data(temperature, t);
         average_down_hierarchy(energy, hierarchy);
         average_down_hierarchy(temperature, hierarchy);
@@ -1017,13 +1024,39 @@ rm_update (LevelData& candidate, LevelData const& state,
     }
 }
 
+// Whether every uncovered valid cell on this rank is finite and in
+// (0, upper_bound).  NaN and infinity fail both comparisons.  Callers
+// combine the ranks with rm_all_ranks.
 bool
-rm_admissible (LevelData const& field, Vector<iMultiFab> const& masks,
-               Real upper_bound = std::numeric_limits<Real>::max())
+rm_locally_admissible (LevelData const& field, Vector<iMultiFab> const& masks,
+                       Real upper_bound = std::numeric_limits<Real>::max())
 {
-    auto const [minimum, maximum] = composite_minimum_maximum(field, masks);
-    return composite_all_finite(field, masks) && minimum > Real(0) &&
-           maximum < upper_bound;
+    ReduceOps<ReduceOpMin> reduce_op;
+    ReduceData<int> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (int level = 0; level < static_cast<int>(field.size()); ++level) {
+        for (MFIter mfi(*field[level]); mfi.isValid(); ++mfi) {
+            auto const array = field[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                Real const value = array(i, j, k);
+                bool const admissible =
+                    value > Real(0) && value < upper_bound;
+                return {(!mask(i, j, k) || admissible) ? 1 : 0};
+            });
+        }
+    }
+    return amrex::get<0>(reduce_data.value(reduce_op)) != 0;
+}
+
+bool
+rm_all_ranks (bool local)
+{
+    int result = local ? 1 : 0;
+    ParallelDescriptor::ReduceIntMin(result);
+    return result != 0;
 }
 
 // Sum local dot products over ranks in one reduction, then divide by the
@@ -1068,7 +1101,7 @@ class ReducedProblem
         BL_PROFILE("FLD::rm_reduced_prepare");
         m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
         m_impl.eliminate(e, true);
-        m_impl.load_state(e, m_impl.eliminated_temperature);
+        m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         Real const inverse_dt = Real(1) / m_impl.physics.dt;
         for (int level = 0; level < m_impl.levels(); ++level) {
             for (MFIter mfi(*m_impl.acoef[level]); mfi.isValid(); ++mfi) {
@@ -1088,7 +1121,7 @@ class ReducedProblem
     void residual (State const& e, State& output)
     {
         m_impl.eliminate(e, false);
-        m_impl.load_state(e, m_impl.eliminated_temperature);
+        m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         m_impl.evaluate_residual(WorkCoupling::Lagged);
         lincomb_level_data(output, Real(1), m_impl.residual_energy, Real(1),
                            m_impl.residual_temperature);
@@ -1164,8 +1197,8 @@ class ReducedProblem
     }
     bool admissible (State const& state) const
     {
-        return rm_admissible(state, m_impl.masks_,
-                             m_impl.options.maximum_energy);
+        return rm_all_ranks(rm_locally_admissible(
+            state, m_impl.masks_, m_impl.options.maximum_energy));
     }
     Real relative_change (State const& lhs, State const& rhs) const
     {
@@ -1194,7 +1227,8 @@ class CoupledProblem
           m_energy_scale(impl.scale(initial.energy,
                                     impl.options.energy_scale_floor)),
           m_temperature_scale(impl.scale(
-              initial.temperature, impl.options.temperature_scale_floor))
+              initial.temperature, impl.options.temperature_scale_floor)),
+          m_energy_rhs(make_cell_data(impl.hierarchy, 1, 0))
     {}
 
     void prepare (State const& state)
@@ -1264,10 +1298,10 @@ class CoupledProblem
 
     void precondition (State& output, State const& rhs)
     {
-        auto energy_rhs = clone_level_data(rhs.energy);
+        copy_level_data(m_energy_rhs, rhs.energy);
         for (int level = 0; level < m_impl.levels(); ++level) {
-            for (MFIter mfi(*energy_rhs[level]); mfi.isValid(); ++mfi) {
-                auto const re = energy_rhs[level]->array(mfi);
+            for (MFIter mfi(*m_energy_rhs[level]); mfi.isValid(); ++mfi) {
+                auto const re = m_energy_rhs[level]->array(mfi);
                 auto const rt = rhs.temperature[level]->const_array(mfi);
                 auto const kk = m_impl.schur_k[level]->const_array(mfi);
                 auto const td = m_impl.schur_diagonal[level]->const_array(mfi);
@@ -1280,7 +1314,7 @@ class CoupledProblem
         }
         set_level_data(output.energy, Real(0));
         m_impl.solver.precondition(get_level_ptrs(output.energy),
-                                   get_level_const_ptrs(energy_rhs));
+                                   get_level_const_ptrs(m_energy_rhs));
         for (int level = 0; level < m_impl.levels(); ++level) {
             for (MFIter mfi(*output.temperature[level]); mfi.isValid();
                  ++mfi) {
@@ -1394,9 +1428,11 @@ class CoupledProblem
     }
     bool admissible (State const& state) const
     {
-        return rm_admissible(state.energy, m_impl.masks_,
-                             m_impl.options.maximum_energy) &&
-               rm_admissible(state.temperature, m_impl.masks_);
+        // One global reduction for both fields.
+        return rm_all_ranks(
+            rm_locally_admissible(state.energy, m_impl.masks_,
+                                  m_impl.options.maximum_energy) &&
+            rm_locally_admissible(state.temperature, m_impl.masks_));
     }
     Real relative_change (State const& lhs, State const& rhs) const
     {
@@ -1412,6 +1448,7 @@ class CoupledProblem
     Impl& m_impl;
     Real m_energy_scale = Real(1);
     Real m_temperature_scale = Real(1);
+    LevelData m_energy_rhs; // precondition() scratch
 };
 
 template <class Result>
@@ -1637,7 +1674,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
 
 // Explicit material advection, then the implicit update.  Newton starts
 // from the previous step's state; if it fails, the step is retried from the
-// predictor iterations' state.
+// predictor iterations' state.  With predict_first the order is reversed:
+// the predictors are deterministic, so retrying from them would only repeat
+// the failed attempt.
 void
 RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
                                         Real dt)
@@ -1652,15 +1691,14 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
     RadiationMaterialState const start{clone_level_data(state.energy),
                                        clone_level_data(state.temperature)};
     int step_nonlinear = 0;
-    if (options.predict_first) { predictors(state); }
     for (int attempt = 0; attempt < 2; ++attempt) {
         bool const fallback = attempt == 1;
         if (fallback) {
             copy_level_data(state.energy, start.energy);
             copy_level_data(state.temperature, start.temperature);
             ++counters.predictor_fallbacks;
-            predictors(state);
         }
+        if (fallback != options.predict_first) { predictors(state); }
         if (attempt_step(state, !fallback, step_nonlinear)) { break; }
     }
     average_down_hierarchy(state.energy, hierarchy);

@@ -47,7 +47,8 @@ struct ICASE2001Result
     int maximum_nonlinear_iterations = 0;
     int total_newton_krylov_iterations = 0;
     int maximum_newton_krylov_iterations = 0;
-    // Newton-Krylov solvers: steps retried after predictor iterations.
+    // Newton-Krylov solvers: steps retried from the other starting state
+    // (with or without predictor iterations).
     int predictor_fallbacks = 0;
     // Nonlinear elimination only: cell-local temperature solves.
     int maximum_local_newton_iterations = 0;

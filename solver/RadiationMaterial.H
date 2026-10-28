@@ -79,8 +79,9 @@ struct RadiationMaterialOptions
      *  still required). */
     bool positive_update = true;
     /** Run the predictor iterations before every step's first Newton
-     *  attempt, not only after a failure: for steps that start far from
-     *  their solution (e.g. one long step to a steady state). */
+     *  attempt, and retry a failure from the unpredicted state: for steps
+     *  that start far from their solution (e.g. one long step to a steady
+     *  state). */
     bool predict_first = false;
     /** Newton-Krylov GMRES and line-search limits. */
     int maximum_linear_iterations = 100;
