@@ -5,6 +5,7 @@
 
 #include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_Reduce.H>
 
 #include <algorithm>
@@ -76,6 +77,7 @@ int constexpr rm_cell_limiter_surface = 2;
 struct RMPhysics
 {
     Real opacity_power = Real(3);
+    Real temperature_floor = Real(1.e-6);
     GpuArray<Real, 3> velocity{};
     GpuArray<Real, 3> dx{};
     Real dt = Real(1);
@@ -94,9 +96,9 @@ struct RMPhysics
 using RMFaces = GpuArray<Array4<Real const>, 3>;
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
-rm_positive (Real t) noexcept
+rm_positive (RMPhysics const& p, Real t) noexcept
 {
-    return amrex::max(t, Real(1.e-6));
+    return amrex::max(t, p.temperature_floor);
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
@@ -117,7 +119,7 @@ rm_dot (GpuArray<Real, 3> const& a, GpuArray<Real, 3> const& b) noexcept
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_opacity (RMPhysics const& p, Real kappa, Real t) noexcept
 {
-    Real const tp = rm_positive(t);
+    Real const tp = rm_positive(p, t);
     int const integer_power = static_cast<int>(p.opacity_power);
     if (Real(integer_power) == p.opacity_power && integer_power >= 0 &&
         integer_power <= 8) {
@@ -135,7 +137,7 @@ rm_opacity (RMPhysics const& p, Real kappa, Real t) noexcept
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_coupling (RMPhysics const& p, Real kappa, Real e, Real t) noexcept
 {
-    if (!(t > Real(1.e-6))) { return Real(0); }
+    if (!(t > p.temperature_floor)) { return Real(0); }
     Real const tc = t;
     Real const sigma = rm_opacity(p, kappa, tc);
     Real const t3 = tc * tc * tc;
@@ -161,12 +163,12 @@ rm_material_residual (RMPhysics const& p, Real inverse_dt,
                       RMCellData const& c, Real temperature,
                       Real& slope) noexcept
 {
-    Real const tp = rm_positive(temperature);
+    Real const tp = rm_positive(p, temperature);
     Real const sigma = rm_opacity(p, c.kappa, temperature);
-    Real const dsigma = temperature > Real(1.e-6)
+    Real const dsigma = temperature > p.temperature_floor
         ? -p.opacity_power * sigma / tp : Real(0);
     Real const t4 = rm_fourth(tp);
-    Real const dt4 = temperature > Real(1.e-6)
+    Real const dt4 = temperature > p.temperature_floor
         ? Real(4) * tp * tp * tp : Real(0);
     slope = inverse_dt - dsigma * (c.energy - t4) + sigma * dt4 +
             Real(2) * dsigma * c.work;
@@ -204,7 +206,7 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_face_diffusion (RMPhysics const& p, Real el, Real er, Real tl, Real tr,
                    Real kl, Real kr, Real h) noexcept
 {
-    Real const tf = Real(0.5) * (rm_positive(tl) + rm_positive(tr));
+    Real const tf = Real(0.5) * (rm_positive(p, tl) + rm_positive(p, tr));
     Real const limiter = p.limiter
         ? std::abs(er - el) / h /
               amrex::max(Real(0.5) * (el + er), Real(1.e-30))
@@ -524,6 +526,13 @@ struct RadiationMaterialSolver::Impl
                 "A nonzero velocity needs a periodic domain and one level");
         }
         physics.opacity_power = options.opacity_power;
+        {
+            ParmParse pp("radiation_material");
+            pp.query("temperature_floor", options.temperature_floor);
+        }
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(options.temperature_floor > Real(0),
+                                         "temperature_floor must be positive");
+        physics.temperature_floor = options.temperature_floor;
         physics.limiter = options.limiter;
         physics.diffusion = rm_diffusion_code(options.diffusion);
         physics.robin_b_diffusion =
@@ -799,7 +808,7 @@ struct RadiationMaterialSolver::Impl
                         }
                     }
                     Real const sigma = rm_opacity(p, k(c), tc);
-                    Real const t4 = rm_fourth(rm_positive(tc));
+                    Real const t4 = rm_fourth(rm_positive(p, tc));
                     re(c) = inverse_dt * (ec - eo(c)) + divergence -
                             sigma * (t4 - ec) - sigma * work - se(c);
                     rt(c) = inverse_dt * (tc - to(c)) - sigma * (ec - t4) +
@@ -882,7 +891,7 @@ struct RadiationMaterialSolver::Impl
                         Real unused;
                         return evaluate(temperature, unused);
                     };
-                    Real x = rm_positive(out(i, j, kk));
+                    Real x = rm_positive(p, out(i, j, kk));
                     Real lo = x;
                     Real hi = x;
                     int expansions = 0;
@@ -1528,7 +1537,7 @@ class CoupledProblem
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     Real const sigma =
-                        rm_opacity(p, ka(i, j, k), rm_positive(t(i, j, k)));
+                        rm_opacity(p, ka(i, j, k), rm_positive(p, t(i, j, k)));
                     // k, clipped where t_d falls in [-2 sigma, 0]; see the
                     // class comment.
                     Real const exact =
@@ -1818,7 +1827,7 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
                 ParallelFor(mfi.validbox(),
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    Real const tc = rm_positive(t(i, j, k));
+                    Real const tc = rm_positive(p, t(i, j, k));
                     Real const sigma = rm_opacity(p, ka(i, j, k), tc);
                     out(i, j, k) = t(i, j, k) - rt(i, j, k) /
                         (inverse_dt + Real(4) * sigma * tc * tc * tc);

@@ -95,6 +95,10 @@ struct RadiationMaterialOptions
      *  a bound on E (e.g. from the boundary data) keeps the eliminated
      *  temperature from overshooting on hard steps. */
     amrex::Real maximum_energy = std::numeric_limits<amrex::Real>::max();
+    /** Opacity, emission and face temperatures use max(T, this); the
+     *  T-derivatives vanish below it.  ParmParse
+     *  radiation_material.temperature_floor overrides it at run time. */
+    amrex::Real temperature_floor = amrex::Real(1.e-6);
     /** Lower bounds of the energy and temperature norm scales. */
     amrex::Real energy_scale_floor = amrex::Real(1.e-30);
     amrex::Real temperature_scale_floor = amrex::Real(1.e-30);
