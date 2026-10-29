@@ -72,7 +72,7 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] amrex::Real composite_maximum (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
 
-[[nodiscard]] amrex::Real composite_maximum_relative_change (
+[[nodiscard]] amrex::Real composite_maximum_difference (
     LevelData const& lhs, LevelData const& rhs,
     amrex::Vector<amrex::iMultiFab> const& masks);
 

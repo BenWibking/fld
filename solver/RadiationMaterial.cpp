@@ -520,6 +520,9 @@ struct RadiationMaterialSolver::Impl
     Array<LinOpBCType, AMREX_SPACEDIM> hibc{};
     MLABecLapAMG solver;
     RadiationMaterialCounters counters;
+    // coupled_residual_norm at the accepted state, if attempt_step already
+    // evaluated it there; negative otherwise.
+    Real accepted_coupled_residual = Real(-1);
 
     LevelData kappa;
     LevelData old_energy;      // E^n
@@ -871,10 +874,19 @@ struct RadiationMaterialSolver::Impl
                     }
                     out(i, j, kk) = x;
                     if (tau) {
-                        // dT/dE = -g_E/g_T with g_E = -sigma(T).
+                        // dT/dE = -g_E/g_T with g_E = -sigma(T).  tau
+                        // only enters the preconditioner, as
+                        // (1 + tau)/dt; where g_T lies in (-2 sigma, 0]
+                        // (runaway opacity) that is small or nonpositive,
+                        // so drop the derivative there, as CoupledProblem
+                        // clips its Schur coefficient.  NaN g_T gives 0.
                         Real gp;
                         evaluate(x, gp);
-                        tau(i, j, kk) = rm_opacity(p, kc, x) / gp;
+                        Real const sigma = rm_opacity(p, kc, x);
+                        tau(i, j, kk) =
+                            gp > Real(0) || gp <= Real(-2) * sigma
+                                ? sigma / gp
+                                : Real(0);
                     }
                     return {iterations, converged ? 1 : 0};
                 });
@@ -1103,36 +1115,6 @@ rm_all_ranks (bool local)
     return result != 0;
 }
 
-// Largest |lhs - rhs| over uncovered valid cells.  Newton changes are this
-// divided by the norm scale, like the residual: a relative change per cell
-// stalls at round-off in cells far below the scale (e.g. ahead of a
-// radiation front).
-Real
-rm_maximum_difference (LevelData const& lhs, LevelData const& rhs,
-                       Vector<iMultiFab> const& masks)
-{
-    ReduceOps<ReduceOpMax> reduce_op;
-    ReduceData<Real> reduce_data(reduce_op);
-    using Tuple = typename decltype(reduce_data)::Type;
-    for (int level = 0; level < static_cast<int>(lhs.size()); ++level) {
-        for (MFIter mfi(*lhs[level]); mfi.isValid(); ++mfi) {
-            auto const x = lhs[level]->const_array(mfi);
-            auto const y = rhs[level]->const_array(mfi);
-            auto const mask = masks[level].const_array(mfi);
-            reduce_op.eval(mfi.validbox(), reduce_data,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
-            {
-                return {mask(i, j, k)
-                            ? amrex::Math::abs(x(i, j, k) - y(i, j, k))
-                            : Real(0)};
-            });
-        }
-    }
-    Real result = amrex::get<0>(reduce_data.value(reduce_op));
-    ParallelDescriptor::ReduceRealMax(result);
-    return result;
-}
-
 // Sum local dot products over ranks in one reduction, then divide by the
 // norm scale.
 void
@@ -1170,11 +1152,16 @@ class ReducedProblem
           m_scale(impl.scale(initial, impl.options.energy_scale_floor))
     {}
 
-    void prepare (State const& e)
+    // Fails, leaving the preconditioner unset, if a cell-local solve fails:
+    // tau is then not written in those cells.
+    bool prepare (State const& e)
     {
         BL_PROFILE("FLD::rm_reduced_prepare");
         m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
-        if (!m_impl.eliminate(e, true)) { m_failed = true; }
+        if (!m_impl.eliminate(e, true)) {
+            m_failed = true;
+            return false;
+        }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         Real const inverse_dt = Real(1) / m_impl.physics.dt;
         for (int level = 0; level < m_impl.levels(); ++level) {
@@ -1190,14 +1177,15 @@ class ReducedProblem
             }
         }
         m_impl.setup_solver();
+        return true;
     }
 
     // R(E) is undefined where the cell-local solves fail: the residual is
     // then NaN, which the line search rejects.  A failure in prepare()
-    // fails every later residual, so the Newton iteration stops.
+    // fails every later residual.
     void residual (State const& e, State& output)
     {
-        if (!m_impl.eliminate(e, false) || m_failed) {
+        if (m_failed || !m_impl.eliminate(e, false)) {
             set_level_data(output, std::numeric_limits<Real>::quiet_NaN());
             return;
         }
@@ -1209,6 +1197,9 @@ class ReducedProblem
 
     // Whether a prepare() elimination failed.
     [[nodiscard]] bool failed () const { return m_failed; }
+
+    // The norm scale, set from the last prepared state.
+    [[nodiscard]] Real norm_scale () const { return m_scale; }
 
     void linearized_residual (State const& e, State& output)
     {
@@ -1283,9 +1274,12 @@ class ReducedProblem
         return rm_all_ranks(rm_locally_admissible(
             state, m_impl.masks_, m_impl.options.maximum_energy));
     }
+    // Measured against the norm scale, like the residual (see
+    // Impl::predictors).
     Real relative_change (State const& lhs, State const& rhs) const
     {
-        return rm_maximum_difference(lhs, rhs, m_impl.masks_) / m_scale;
+        return composite_maximum_difference(lhs, rhs, m_impl.masks_) /
+               m_scale;
     }
 
   private:
@@ -1322,7 +1316,7 @@ class CoupledProblem
           m_energy_rhs(make_cell_data(impl.hierarchy, 1, 0))
     {}
 
-    void prepare (State const& state)
+    bool prepare (State const& state)
     {
         BL_PROFILE("FLD::rm_coupled_prepare");
         m_energy_scale = m_impl.scale(state.energy,
@@ -1367,6 +1361,7 @@ class CoupledProblem
             }
         }
         m_impl.setup_solver();
+        return true;
     }
 
     void residual (State const& state, State& output)
@@ -1534,10 +1529,11 @@ class CoupledProblem
     Real relative_change (State const& lhs, State const& rhs) const
     {
         return amrex::max(
-            rm_maximum_difference(lhs.energy, rhs.energy, m_impl.masks_) /
+            composite_maximum_difference(lhs.energy, rhs.energy,
+                                         m_impl.masks_) /
                 m_energy_scale,
-            rm_maximum_difference(lhs.temperature, rhs.temperature,
-                                  m_impl.masks_) /
+            composite_maximum_difference(lhs.temperature, rhs.temperature,
+                                         m_impl.masks_) /
                 m_temperature_scale);
     }
 
@@ -1625,11 +1621,15 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
             }
         }
 
+        // Changes are measured against the norm scale, like the residual: a
+        // relative change per cell stalls at round-off in cells far below
+        // the scale (e.g. ahead of a radiation front).
         Real const change = amrex::max(
-            composite_maximum_relative_change(next_energy, state.energy,
-                                              masks_),
-            composite_maximum_relative_change(next_temperature,
-                                              state.temperature, masks_));
+            composite_maximum_difference(next_energy, state.energy, masks_) /
+                scale(state.energy, options.energy_scale_floor),
+            composite_maximum_difference(next_temperature, state.temperature,
+                                         masks_) /
+                scale(state.temperature, options.temperature_scale_floor));
         lincomb_level_data(state.energy, Real(0.3), state.energy, Real(0.7),
                            next_energy);
         lincomb_level_data(state.temperature, Real(0.3), state.temperature,
@@ -1693,10 +1693,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto correction = make_cell_data(hierarchy, 1, 1);
         auto rhs = make_cell_data(hierarchy, 1, 0);
         Real change = std::numeric_limits<Real>::max();
+        ReducedProblem problem(*this, state.energy);
         for (int iteration = 0;; ++iteration) {
-            ReducedProblem problem(*this, state.energy);
-            problem.prepare(state.energy);
-            if (problem.failed()) {
+            if (!problem.prepare(state.energy)) {
                 return fail("Cell-local material solve did not converge");
             }
             copy_level_data(state.temperature, eliminated_temperature);
@@ -1704,6 +1703,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
                 coupled_residual_norm(state.energy, state.temperature);
             if (unlagged <= tolerance && change <= tolerance) {
                 counters.final_change = change;
+                accepted_coupled_residual = unlagged;
                 return true;
             }
             if (iteration == options.maximum_quasi_newton_iterations) {
@@ -1723,8 +1723,15 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
             auto next = clone_level_data(state.energy);
             saxpy_level_data(next, Real(1), correction);
             average_down_hierarchy(next, hierarchy);
-            change = rm_maximum_difference(next, state.energy, masks_) /
-                     scale(state.energy, options.energy_scale_floor);
+            // eliminate() clamps E at zero, so without this check a
+            // nonpositive E could be accepted as converged.
+            if (!rm_all_ranks(rm_locally_admissible(
+                    next, masks_, options.maximum_energy))) {
+                return fail("Quasi-Newton update left E inadmissible");
+            }
+            change =
+                composite_maximum_difference(next, state.energy, masks_) /
+                problem.norm_scale();
             copy_level_data(state.energy, next);
             ++step_nonlinear;
         }
@@ -1760,7 +1767,10 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         copy_level_data(state.temperature, eliminated_temperature);
         Real const unlagged =
             coupled_residual_norm(state.energy, state.temperature);
-        if (lag > 0 && unlagged <= tolerance) { break; }
+        if (lag > 0 && unlagged <= tolerance) {
+            accepted_coupled_residual = unlagged;
+            break;
+        }
         if (lag >= options.maximum_lag_iterations) {
             return fail("Lagged work iteration did not converge");
         }
@@ -1803,12 +1813,17 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
     copy_level_data(old_energy, state.energy);
     if (physics.moving) { explicit_material_advection(state.temperature); }
     copy_level_data(old_temperature, state.temperature);
-    counters.minimum_runaway_time =
-        amrex::min(counters.minimum_runaway_time,
-                   runaway_time(state.energy, state.temperature));
+    // k = sigma T^3 (4 - p + p E/T^4) cannot be negative for 0 <= p <= 4
+    // and E >= 0, so skip the sweep and its reduction.
+    if (physics.opacity_power < Real(0) || physics.opacity_power > Real(4)) {
+        counters.minimum_runaway_time =
+            amrex::min(counters.minimum_runaway_time,
+                       runaway_time(state.energy, state.temperature));
+    }
     RadiationMaterialState const start{clone_level_data(state.energy),
                                        clone_level_data(state.temperature)};
     int step_nonlinear = 0;
+    accepted_coupled_residual = Real(-1);
     for (int attempt = 0; attempt < 2; ++attempt) {
         bool const fallback = attempt == 1;
         if (fallback) {
@@ -1829,8 +1844,12 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
     counters.nonlinear += step_nonlinear;
     counters.maximum_nonlinear =
         amrex::max(counters.maximum_nonlinear, step_nonlinear);
+    // coupled_residual_norm averages down its work copies, so the
+    // average_down above does not change it.
     counters.final_coupled_residual =
-        coupled_residual_norm(state.energy, state.temperature);
+        accepted_coupled_residual >= Real(0)
+            ? accepted_coupled_residual
+            : coupled_residual_norm(state.energy, state.temperature);
     counters.maximum_coupled_residual = amrex::max(
         counters.maximum_coupled_residual, counters.final_coupled_residual);
 }
@@ -1966,8 +1985,10 @@ RadiationMaterialSolver::fill_cell_coefficients (
                         if (c[d] == p.domain_lo[d]) { lo = c; }
                         if (c[d] == p.domain_hi[d]) { hi = c; }
                     }
-                    Real const g = (e(hi) - e(lo)) /
-                                   (Real(hi[d] - lo[d]) * p.dx[d]);
+                    // One non-periodic cell across: no gradient.
+                    Real const g = hi[d] == lo[d]
+                        ? Real(0)
+                        : (e(hi) - e(lo)) / (Real(hi[d] - lo[d]) * p.dx[d]);
                     gradient_squared += g * g;
                 }
                 Real const limiter = p.limiter

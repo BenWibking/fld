@@ -21,8 +21,8 @@ struct NewtonKrylovOptions
     amrex::Real nonlinear_tolerance = amrex::Real(1.e-7);
     amrex::Real linear_tolerance = amrex::Real(1.e-4);
     bool eisenstat_walker = false;
-    // When false, a failed line search or a non-finite initial residual
-    // returns a result with converged = false (the state is left at the
+    // When false, a failed line search, a failed prepare(), or a non-finite
+    // initial residual returns a result with converged = false (the state is left at the
     // last accepted iterate) instead of aborting.  An unconverged linear
     // solve is not a failure by itself.
     bool abort_on_failure = true;
@@ -61,6 +61,8 @@ struct NewtonKrylovResult
  * `norm2Data` computes scale-independent global squared-norm components;
  * `norm2FromData` applies the current weights without communication. These
  * components remain valid across prepare() for an unchanged vector.
+ * prepare() returns false if the Jacobian at the state cannot be set up;
+ * the solve then fails.
  */
 template <typename Problem> class NewtonKrylovSolver
 {
@@ -157,9 +159,17 @@ template <typename Problem> class NewtonKrylovSolver
                                    << linear_tolerance << '\n';
                 }
             }
+            bool prepared;
             {
                 BL_PROFILE("FLD::NewtonKrylov::prepare");
-                m_problem.prepare(state);
+                prepared = m_problem.prepare(state);
+            }
+            if (!prepared) {
+                std::string const prepare_failure =
+                    m_options.problem_name + " Jacobian setup failed";
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!m_options.abort_on_failure,
+                                                 prepare_failure.c_str());
+                return result;
             }
             LinearizedOperator linearized(m_problem, state, residual,
                                           m_options.centered_difference,

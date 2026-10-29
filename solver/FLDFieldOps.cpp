@@ -360,9 +360,10 @@ composite_maximum (LevelData const& data, Vector<iMultiFab> const& masks)
     return result;
 }
 
+// Largest |lhs - rhs| over uncovered valid cells.
 Real
-composite_maximum_relative_change (LevelData const& lhs, LevelData const& rhs,
-                                   Vector<iMultiFab> const& masks)
+composite_maximum_difference (LevelData const& lhs, LevelData const& rhs,
+                              Vector<iMultiFab> const& masks)
 {
     assert_compatible(lhs, rhs);
     AMREX_ALWAYS_ASSERT(lhs.size() == masks.size());
@@ -377,13 +378,8 @@ composite_maximum_relative_change (LevelData const& lhs, LevelData const& rhs,
             reduce_op.eval(mfi.validbox(), reduce_data,
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
             {
-                Real const scale = amrex::max(
-                    amrex::max(amrex::Math::abs(x(i, j, k)),
-                               amrex::Math::abs(y(i, j, k))),
-                    Real(1.e-12));
                 return {mask(i, j, k)
-                            ? amrex::Math::abs(x(i, j, k) - y(i, j, k)) /
-                                  scale
+                            ? amrex::Math::abs(x(i, j, k) - y(i, j, k))
                             : Real(0)};
             });
         }
