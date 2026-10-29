@@ -64,7 +64,8 @@ struct NewtonKrylovResult
  * prepare() returns false if the Jacobian at the state cannot be set up;
  * the solve then fails.  prepare(state) always follows residual(state) for
  * the same state (the initial residual or the accepted line-search
- * candidate), so a problem may reuse work from that evaluation.
+ * candidate), so a problem may reuse work from that evaluation.  Likewise,
+ * on a converged return the last residual() was at the returned state.
  */
 template <typename Problem> class NewtonKrylovSolver
 {

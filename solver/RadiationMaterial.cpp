@@ -1019,6 +1019,14 @@ struct RadiationMaterialSolver::Impl
     Real loaded_coupled_residual_norm (LevelData const& e, LevelData const& t)
     {
         evaluate_residual(WorkCoupling::Current);
+        return evaluated_coupled_residual_norm(e, t);
+    }
+
+    // coupled_residual_norm with the residual at (e, t) already in
+    // residual_energy and residual_temperature.
+    Real evaluated_coupled_residual_norm (LevelData const& e,
+                                          LevelData const& t)
+    {
         Real const es = scale(e, options.energy_scale_floor);
         Real const ts = scale(t, options.temperature_scale_floor);
         return std::sqrt(
@@ -1808,8 +1816,13 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         NewtonKrylovSolver<CoupledProblem> newton(problem, newton_options);
         auto const result = newton.solve(state);
         rm_record_newton(counters, result, step_nonlinear);
-        return result.converged ||
-               fail("Coupled Newton-Krylov did not converge");
+        if (!result.converged) {
+            return fail("Coupled Newton-Krylov did not converge");
+        }
+        // The last residual() was at the returned state.
+        accepted_coupled_residual =
+            evaluated_coupled_residual_norm(state.energy, state.temperature);
+        return true;
     }
 
     copy_level_data(eliminated_temperature, state.temperature);
@@ -1888,10 +1901,12 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         if (!result.converged) {
             return fail("Reduced Newton-Krylov did not converge");
         }
-        if (!eliminate(state.energy, false)) {
-            return fail("Cell-local material solve did not converge");
-        }
+        // The last residual() was at the returned E, so T(E) and its
+        // residual are already evaluated; without motion the lagged
+        // residual is the current one.
         copy_level_data(state.temperature, eliminated_temperature);
+        accepted_coupled_residual =
+            evaluated_coupled_residual_norm(state.energy, state.temperature);
         return true;
     }
     // Lagged work: freeze the work flux, converge the reduced system to a
