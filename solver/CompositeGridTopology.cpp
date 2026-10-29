@@ -536,12 +536,14 @@ CompositeGridTopology::buildRowsAndConnections ()
                                     Long const fine_row = fine_rows(fine_cell);
                                     // The fine side falls back to the
                                     // two-point flux under the same test.
+                                    // Only the Hypre stencil has the second
+                                    // ghost layer that holds `second`.
                                     IntVect const second =
                                         fine_cell + side *
                                         IntVect::TheDimensionVector(direction);
-                                    Long const second_row = fine_rows(second);
-                                    if (fine_row >= 0 && hypre_cf &&
-                                        second_row >= 0) {
+                                    Long const second_row = hypre_cf
+                                        ? fine_rows(second) : Long(-1);
+                                    if (fine_row >= 0 && second_row >= 0) {
                                         // Reflux: minus the fine cell's flux
                                         // K (phi_f0 - phi_ghost).
                                         auto const cc =

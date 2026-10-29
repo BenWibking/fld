@@ -575,6 +575,10 @@ struct RadiationMaterialSolver::Impl
     Real accepted_coupled_residual = Real(-1);
     // Lag iterations in this step, over all attempts (like step_nonlinear).
     int step_lag = 0;
+    // Bumped whenever the loaded state, T(E), the lagged flux, or the
+    // residual changes, so a problem can tell whether the work fields
+    // still hold its last residual().
+    long generation = 0;
 
     LevelData kappa;
     LevelData old_energy;      // E^n
@@ -638,6 +642,7 @@ struct RadiationMaterialSolver::Impl
     // leaves it.
     void load_loaded_energy (LevelData const& t)
     {
+        ++generation;
         copy_level_data(temperature, t);
         average_down_hierarchy(energy, hierarchy);
         average_down_hierarchy(temperature, hierarchy);
@@ -737,6 +742,7 @@ struct RadiationMaterialSolver::Impl
     // material work term uses the current flux, or the lagged flux.
     void evaluate_residual (WorkCoupling coupling)
     {
+        ++generation;
         solver.residualWithoutAssembly(
             get_level_ptrs(residual_energy), get_level_const_ptrs(energy),
             get_level_const_ptrs(zero), Real(0), Real(1),
@@ -806,6 +812,7 @@ struct RadiationMaterialSolver::Impl
     // Store the current cell flux F0 as the lagged work flux.
     void freeze_work_flux ()
     {
+        ++generation;
         RMPhysics const p = level_physics(0);
         for (MFIter mfi(*lagged_flux[0]); mfi.isValid(); ++mfi) {
             auto const e = energy[0]->const_array(mfi);
@@ -832,6 +839,7 @@ struct RadiationMaterialSolver::Impl
     [[nodiscard]] bool eliminate (LevelData const& e, bool with_derivative)
     {
         BL_PROFILE("FLD::rm_eliminate");
+        ++generation;
         copy_level_data(energy, e);
         ++counters.eliminations;
         RMPhysics const p = physics;
@@ -852,6 +860,7 @@ struct RadiationMaterialSolver::Impl
                 auto const st = source_temperature[level]->const_array(mfi);
                 auto const lag = lagged_flux[level]->const_array(mfi);
                 auto const out = eliminated_temperature[level]->array(mfi);
+                auto const mask = masks_[level].const_array(mfi);
                 auto const tau = with_derivative
                     ? temperature_derivative[level]->array(mfi)
                     : Array4<Real>{};
@@ -898,7 +907,13 @@ struct RadiationMaterialSolver::Impl
                     }
                     // No bracket, or a NaN (which fails both tests).
                     if (!(g_lo <= Real(0) && g_hi >= Real(0))) {
-                        return {0, 0};
+                        if (tau) { tau(i, j, kk) = Real(0); }
+                        return {0, mask(i, j, kk) ? 0 : 1};
+                    }
+                    // After two or more expansions the warm start lies
+                    // outside the bracket: start from its nearer end.
+                    if (x < lo || x > hi) {
+                        x = -g_lo < g_hi ? lo : hi;
                     }
                     int iterations = 0;
                     bool converged = lo == hi;
@@ -931,7 +946,10 @@ struct RadiationMaterialSolver::Impl
                         tau(i, j, kk) =
                             rm_temperature_derivative(p, inverse_dt, cell, x);
                     }
-                    return {iterations, converged ? 1 : 0};
+                    // Covered cells are solved for the warm start, but
+                    // do not enter the composite solution.
+                    return {iterations,
+                            (converged || !mask(i, j, kk)) ? 1 : 0};
                 });
             }
         }
@@ -1270,7 +1288,10 @@ using Impl = RadiationMaterialSolver::Impl;
 // Nonlinear elimination: Newton-Krylov on R(E) = R_E + R_T with T = T(E)
 // (the work term's flux lagged), preconditioned by one AMG cycle of
 // (1 + dT/dE)/dt - div D grad.  Advection and work terms are left out of
-// the preconditioner.
+// the preconditioner.  With clip_reaction (Newton-Krylov) the reaction
+// coefficient is at least 1/(2 dt), as in CoupledProblem: just below
+// g_T = -sigma, 1 + tau approaches zero and the AMG row becomes nearly
+// singular.  The quasi-Newton linear solve keeps the exact tau.
 class ReducedProblem
 {
   public:
@@ -1279,16 +1300,28 @@ class ReducedProblem
 
     // The norm scale is set from the initial state, because the Newton
     // solver checks the initial residual before the first prepare().
-    ReducedProblem (Impl& impl, State const& initial)
+    ReducedProblem (Impl& impl, State const& initial, bool clip_reaction)
         : m_impl(impl),
-          m_scale(impl.scale(initial, impl.options.energy_scale_floor))
+          m_scale(impl.scale(initial, impl.options.energy_scale_floor)),
+          m_clip_reaction(clip_reaction)
     {}
 
-    // NewtonKrylovSolver calls this right after residual(e), so T(E) is
-    // already in eliminated_temperature and (E, T(E)) is loaded: only
-    // dT/dE is left to compute.
+    // True when the work fields still hold the last residual(), and it
+    // was at `e`: T(E) is in eliminated_temperature, (E, T(E)) is loaded,
+    // and the lagged residual is in residual_energy/residual_temperature.
+    [[nodiscard]] bool evaluated_at (State const& e) const
+    {
+        return m_evaluated == m_impl.generation &&
+               composite_maximum_difference(e, m_impl.energy,
+                                            m_impl.masks_) == Real(0);
+    }
+
+    // NewtonKrylovSolver calls this right after residual(e), so only dT/dE
+    // is normally left to compute; any other call order falls back to a
+    // fresh solve.
     bool prepare (State const& e)
     {
+        if (!evaluated_at(e)) { return prepare_unsolved(e); }
         BL_PROFILE("FLD::rm_reduced_prepare");
         m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
         m_impl.eliminated_derivative();
@@ -1313,12 +1346,14 @@ class ReducedProblem
     // then NaN, which the line search rejects.
     void residual (State const& e, State& output)
     {
+        m_evaluated = -1;
         if (!m_impl.eliminate(e, false)) {
             set_level_data(output, std::numeric_limits<Real>::quiet_NaN());
             return;
         }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         m_impl.evaluate_residual(WorkCoupling::Lagged);
+        m_evaluated = m_impl.generation;
         lincomb_level_data(output, Real(1), m_impl.residual_energy, Real(1),
                            m_impl.residual_temperature);
     }
@@ -1413,6 +1448,8 @@ class ReducedProblem
     void setup_preconditioner ()
     {
         Real const inverse_dt = Real(1) / m_impl.physics.dt;
+        Real const floor = m_clip_reaction
+            ? Real(0.5) : std::numeric_limits<Real>::lowest();
         for (int level = 0; level < m_impl.levels(); ++level) {
             for (MFIter mfi(*m_impl.acoef[level]); mfi.isValid(); ++mfi) {
                 auto const tau =
@@ -1421,7 +1458,8 @@ class ReducedProblem
                 ParallelFor(mfi.validbox(),
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    a(i, j, k) = inverse_dt * (Real(1) + tau(i, j, k));
+                    a(i, j, k) = inverse_dt *
+                        amrex::max(Real(1) + tau(i, j, k), floor);
                 });
             }
         }
@@ -1430,6 +1468,9 @@ class ReducedProblem
 
     Impl& m_impl;
     Real m_scale = Real(1);
+    bool m_clip_reaction;
+    // Impl::generation after the last successful residual(); -1 if none.
+    long m_evaluated = -1;
 };
 
 // Coupled (E, T) Newton-Krylov.  The preconditioner eliminates the
@@ -1467,7 +1508,11 @@ class CoupledProblem
                                       m_impl.options.energy_scale_floor);
         m_temperature_scale = m_impl.scale(
             state.temperature, m_impl.options.temperature_scale_floor);
-        m_impl.load_state(state.energy, state.temperature);
+        // NewtonKrylovSolver calls this right after residual(state), which
+        // already loaded the state.
+        if (!evaluated_at(state)) {
+            m_impl.load_state(state.energy, state.temperature);
+        }
         RMPhysics const p = m_impl.physics;
         Real const inverse_dt = Real(1) / p.dt;
         for (int level = 0; level < m_impl.levels(); ++level) {
@@ -1508,10 +1553,23 @@ class CoupledProblem
         return true;
     }
 
+    // True when residual_energy/residual_temperature still hold the last
+    // residual(), and it was at `state`.
+    [[nodiscard]] bool evaluated_at (State const& state) const
+    {
+        return m_evaluated == m_impl.generation &&
+               composite_maximum_difference(state.energy, m_impl.energy,
+                                            m_impl.masks_) == Real(0) &&
+               composite_maximum_difference(state.temperature,
+                                            m_impl.temperature,
+                                            m_impl.masks_) == Real(0);
+    }
+
     void residual (State const& state, State& output)
     {
         m_impl.load_state(state.energy, state.temperature);
         m_impl.evaluate_residual(WorkCoupling::Current);
+        m_evaluated = m_impl.generation;
         copy_level_data(output.energy, m_impl.residual_energy);
         copy_level_data(output.temperature, m_impl.residual_temperature);
     }
@@ -1686,6 +1744,8 @@ class CoupledProblem
     Real m_energy_scale = Real(1);
     Real m_temperature_scale = Real(1);
     LevelData m_energy_rhs; // precondition() scratch
+    // Impl::generation after the last residual(); -1 if none.
+    long m_evaluated = -1;
 };
 
 template <class Result>
@@ -1703,7 +1763,8 @@ rm_record_newton (RadiationMaterialCounters& counters, Result const& result,
 } // namespace
 
 // Damped (0.7) linearized (Picard) iterations, until the relative change
-// falls below 1e-3 (at most 20); false if a linear solve fails: with sigma and D frozen, a converged solve
+// falls below 1e-3 (at most 20); false if a linear solve fails or the
+// result is inadmissible: with sigma and D frozen, a converged solve
 // of (1/dt + sigma - div D grad) dE = -R_E, then the diagonal update
 // (1/dt + 4 sigma T^3) dT = -R_T at the new E.  Without velocity this is
 // E <- [E^n/dt + sigma T^4], T <- linearized emission.  Used to restart a
@@ -1780,7 +1841,12 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
         average_down_hierarchy(state.temperature, hierarchy);
         if (change < Real(1.e-3)) { break; }
     }
-    return true;
+    // A positive update keeps the sign of its start, so Newton cannot
+    // recover from a nonpositive predicted state.
+    return rm_all_ranks(
+        rm_locally_admissible(state.energy, masks_,
+                              options.maximum_energy) &&
+        rm_locally_admissible(state.temperature, masks_));
 }
 
 // One attempt at the implicit step from `state`.  With allow_failure, a
@@ -1819,9 +1885,9 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         if (!result.converged) {
             return fail("Coupled Newton-Krylov did not converge");
         }
-        // The last residual() was at the returned state.
-        accepted_coupled_residual =
-            evaluated_coupled_residual_norm(state.energy, state.temperature);
+        accepted_coupled_residual = problem.evaluated_at(state)
+            ? evaluated_coupled_residual_norm(state.energy, state.temperature)
+            : coupled_residual_norm(state.energy, state.temperature);
         return true;
     }
 
@@ -1836,11 +1902,16 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         // T(E) cell by cell, then one converged linear solve of the
         // frozen-coefficient system, and repeat.  Their Jacobian ignores
         // opacity derivatives; dT/dE here includes d(sigma)/dT.  With a
-        // moving medium the work flux is re-frozen each iteration.
+        // moving medium the work flux is re-frozen each iteration at
+        // (E, T(E)), and the right-hand side is the lagged residual there
+        // without solving T(E) again: R_T is then not zero, but the
+        // iteration count matches a fresh elimination at half the cost.
+        // (Freezing at the new E before the elimination instead costs ~15%
+        // more iterations and loses round-off energy conservation.)
         auto correction = make_cell_data(hierarchy, 1, 1);
         auto rhs = make_cell_data(hierarchy, 1, 0);
         Real change = std::numeric_limits<Real>::max();
-        ReducedProblem problem(*this, state.energy);
+        ReducedProblem problem(*this, state.energy, false);
         for (int iteration = 0;; ++iteration) {
             if (!problem.prepare_unsolved(state.energy)) {
                 return fail("Cell-local material solve did not converge");
@@ -1857,15 +1928,13 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
             if (iteration == options.maximum_quasi_newton_iterations) {
                 return fail("Quasi-Newton iteration did not converge");
             }
+            // Without motion the lagged residual is the current one.
             if (physics.moving) {
-                // The re-frozen work flux changes T(E).
                 freeze_work_flux();
-                problem.residual(state.energy, rhs);
-            } else {
-                // Without motion the lagged residual is the current one.
-                lincomb_level_data(rhs, Real(1), residual_energy, Real(1),
-                                   residual_temperature);
+                evaluate_residual(WorkCoupling::Lagged);
             }
+            lincomb_level_data(rhs, Real(1), residual_energy, Real(1),
+                               residual_temperature);
             problem.scale(rhs, Real(-1));
             set_level_data(correction, Real(0));
             auto const info = solver.solve(get_level_ptrs(correction),
@@ -1894,16 +1963,25 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
 
     // ne_newton_krylov
     if (!physics.moving) {
-        ReducedProblem problem(*this, state.energy);
+        ReducedProblem problem(*this, state.energy, true);
         NewtonKrylovSolver<ReducedProblem> newton(problem, newton_options);
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
         if (!result.converged) {
             return fail("Reduced Newton-Krylov did not converge");
         }
-        // The last residual() was at the returned E, so T(E) and its
-        // residual are already evaluated; without motion the lagged
+        // The last residual() is normally at the returned E, so T(E) and
+        // its residual are already evaluated; without motion the lagged
         // residual is the current one.
+        if (!problem.evaluated_at(state.energy)) {
+            if (!eliminate(state.energy, false)) {
+                return fail("Cell-local material solve did not converge");
+            }
+            copy_level_data(state.temperature, eliminated_temperature);
+            accepted_coupled_residual =
+                coupled_residual_norm(state.energy, state.temperature);
+            return true;
+        }
         copy_level_data(state.temperature, eliminated_temperature);
         accepted_coupled_residual =
             evaluated_coupled_residual_norm(state.energy, state.temperature);
@@ -1915,8 +1993,11 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
     // criterion: an inner solve may still move E after the unlagged residual
     // has converged.)
     int lag = 0;
+    // Whether eliminated_temperature already holds T(E) for the current E
+    // and lagged flux, as the inner solve's last residual() leaves it.
+    bool eliminated = false;
     for (;; ++lag) {
-        if (!eliminate(state.energy, false)) {
+        if (!eliminated && !eliminate(state.energy, false)) {
             return fail("Cell-local material solve did not converge");
         }
         copy_level_data(state.temperature, eliminated_temperature);
@@ -1935,7 +2016,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         // stall the lag just above it.
         inner.nonlinear_tolerance =
             Real(0.1) * amrex::max(tolerance, unlagged);
-        ReducedProblem problem(*this, state.energy);
+        ReducedProblem problem(*this, state.energy, true);
         NewtonKrylovSolver<ReducedProblem> newton(problem, inner);
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
@@ -1943,6 +2024,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         if (!result.converged) {
             return fail("Lagged inner Newton-Krylov did not converge");
         }
+        eliminated = problem.evaluated_at(state.energy);
     }
     return true;
 }
@@ -1951,8 +2033,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
 // from the previous step's state; if it fails, the step is retried from the
 // predictor iterations' state.  With predict_first the order is reversed:
 // the predictors are deterministic, so retrying from them would only repeat
-// the failed attempt.  Predictors whose linear solve fails count as a failed
-// attempt.
+// the failed attempt.  Predictors whose linear solve fails, or that leave
+// E or T inadmissible, count as a failed attempt.
 void
 RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
                                         Real dt)
@@ -1985,7 +2067,8 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
         }
         if (fallback != options.predict_first && !predictors(state)) {
             if (fallback) {
-                amrex::Abort("Predictor linear solve did not converge");
+                amrex::Abort("Predictors failed: a linear solve did not "
+                             "converge or E or T is inadmissible");
             }
             continue;
         }

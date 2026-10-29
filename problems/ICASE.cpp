@@ -168,14 +168,17 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     result.high_z_cells = count_high_z_cells(atomic_number, masks);
     result.initial_total_energy = solver.energy_budget(state).total;
 
+    // Each step's budget is the next step's starting total.
+    Real total = result.initial_total_energy;
     for (int step = 0; step < time_steps; ++step) {
-        Real const old_total = solver.energy_budget(state).total;
+        Real const old_total = total;
         int const previous_iterations = solver.counters().nonlinear;
         solver.advance(state, dt);
         // The exchange source is equal and opposite in the E and T
         // equations, so the change in integral(E + T) must equal the net
         // radiation supplied through the two Marshak boundaries.
         auto const budget = solver.energy_budget(state);
+        total = budget.total;
         Real const energy_change = budget.total - old_total;
         Real const expected_change = dt * budget.boundary_input;
         Real const balance_error =
@@ -199,7 +202,7 @@ run_icase_2001 (int n_cell, int time_steps, Real dt, bool iteration_output,
     auto const& counters = solver.counters();
     result.time_steps = time_steps;
     result.final_time = Real(time_steps) * dt;
-    result.final_total_energy = solver.energy_budget(state).total;
+    result.final_total_energy = total;
     result.final_nonlinear_change = counters.final_change;
     result.maximum_coupled_residual = counters.maximum_coupled_residual;
     result.total_nonlinear_iterations = counters.nonlinear;

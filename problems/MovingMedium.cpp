@@ -172,12 +172,15 @@ run_pulse (ParmParse& pp)
     Real const x0 = centroid();
     Real maximum_balance_error = Real(0);
     double const start = amrex::second();
+    // Each step's budget is the next step's starting total.
+    Real total = solver.energy_budget(state).total;
     for (int step = 0; step < steps; ++step) {
-        Real const old_total = solver.energy_budget(state).total;
+        Real const old_total = total;
         solver.advance(state, dt);
         // Material advection conserves the total on the periodic domain, so
         // it changes only by the work done on the flow.
         auto const budget = solver.energy_budget(state);
+        total = budget.total;
         Real const expected =
             dt * (budget.boundary_input - budget.work + budget.source);
         Real const error = std::abs(budget.total - old_total - expected) /
