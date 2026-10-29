@@ -875,18 +875,19 @@ struct RadiationMaterialSolver::Impl
                     out(i, j, kk) = x;
                     if (tau) {
                         // dT/dE = -g_E/g_T with g_E = -sigma(T).  tau
-                        // only enters the preconditioner, as
-                        // (1 + tau)/dt; where g_T lies in (-2 sigma, 0]
-                        // (runaway opacity) that is small or nonpositive,
-                        // so drop the derivative there, as CoupledProblem
-                        // clips its Schur coefficient.  NaN g_T gives 0.
+                        // enters the reaction coefficient (1 + tau)/dt of
+                        // the ReducedProblem preconditioner and of the
+                        // quasi-Newton linear solve, which AMG needs
+                        // positive.  Where g_T lies in [-sigma, 0]
+                        // (runaway opacity) 1 + tau is nonpositive or
+                        // infinite, so drop the derivative there; it is
+                        // exact everywhere else.  NaN g_T gives 0.
                         Real gp;
                         evaluate(x, gp);
                         Real const sigma = rm_opacity(p, kc, x);
-                        tau(i, j, kk) =
-                            gp > Real(0) || gp <= Real(-2) * sigma
-                                ? sigma / gp
-                                : Real(0);
+                        tau(i, j, kk) = gp > Real(0) || gp < -sigma
+                                            ? sigma / gp
+                                            : Real(0);
                     }
                     return {iterations, converged ? 1 : 0};
                 });
