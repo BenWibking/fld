@@ -641,6 +641,12 @@ run_mlabeclap_amg_checks ()
         make_strip_hierarchy({12, 48}, {{0, 12}, {16, 32}}, 4,
                              nonperiodic()),
         true);
+    // Level 2 starts one level-1 cell inside level 1, so the second fine
+    // cell of the 0/1 interface is covered.
+    check_constant_composite(
+        make_strip_hierarchy({8, 16, 32}, {{0, 8}, {4, 12}, {10, 18}}, 4,
+                             nonperiodic()),
+        true);
     amrex::Print() << "MLABecLapAMG operator-action, boundary, lifecycle, "
                       "and hierarchy-shape checks passed\n";
 }

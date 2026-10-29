@@ -59,7 +59,8 @@ both the matrix-free residual and the assembled preconditioner. The default,
 `hypre`, follows `amrex::HypreMLABecLap`: each fine-face flux uses a ghost
 value interpolated from the coarse cell, its transverse neighbors, and two
 fine cells, and the coarse cell receives the sum of the fine-face fluxes. It
-is second-order accurate but gives a nonsymmetric matrix. `two_point` couples
+is second-order accurate but gives a nonsymmetric matrix. Faces whose second
+fine cell is covered by a finer level fall back to the two-point flux. `two_point` couples
 each fine cell to its coarse neighbor with a symmetric two-point flux, which
 is inconsistent at the interface and only first-order accurate. Run
 `mms_only=1 mms.n_cells=16 32 64` for a manufactured-solution convergence

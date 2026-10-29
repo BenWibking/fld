@@ -534,18 +534,16 @@ CompositeGridTopology::buildRowsAndConnections ()
                                         "CompositeGridTopology fine-row metadata "
                                         "does not contain a requested interface cell");
                                     Long const fine_row = fine_rows(fine_cell);
-                                    if (fine_row >= 0 && hypre_cf) {
+                                    // The fine side falls back to the
+                                    // two-point flux under the same test.
+                                    IntVect const second =
+                                        fine_cell + side *
+                                        IntVect::TheDimensionVector(direction);
+                                    Long const second_row = fine_rows(second);
+                                    if (fine_row >= 0 && hypre_cf &&
+                                        second_row >= 0) {
                                         // Reflux: minus the fine cell's flux
                                         // K (phi_f0 - phi_ghost).
-                                        IntVect const second =
-                                            fine_cell + side *
-                                            IntVect::TheDimensionVector(direction);
-                                        Long const second_row = fine_rows(second);
-                                        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                                            second_row >= 0,
-                                            "The Hypre coarse/fine stencil "
-                                            "needs two fine cells normal to "
-                                            "the interface");
                                         auto const cc =
                                             ghost_weights(rr[direction]);
                                         int const first = static_cast<int>(
@@ -616,16 +614,15 @@ CompositeGridTopology::buildRowsAndConnections ()
                             coarse_row >= 0,
                             "CompositeGridTopology is missing a coarse row at "
                             "a coarse/fine interface");
-                        if (hypre_cf) {
-                            // K (phi_f0 - phi_ghost), with the ghost value
-                            // from the coarse value and two fine cells.
-                            IntVect const second = iv - side *
-                                IntVect::TheDimensionVector(direction);
-                            Long const second_row = row_fab(second);
-                            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                                second_row >= 0,
-                                "The Hypre coarse/fine stencil needs two "
-                                "fine cells normal to the interface");
+                        // K (phi_f0 - phi_ghost), with the ghost value from
+                        // the coarse value and two fine cells.  Where the
+                        // second cell has no row (covered by a finer level,
+                        // or outside a non-periodic domain), both sides of
+                        // the face use the two-point flux instead.
+                        IntVect const second = iv - side *
+                            IntVect::TheDimensionVector(direction);
+                        Long const second_row = row_fab(second);
+                        if (hypre_cf && second_row >= 0) {
                             auto const cc = ghost_weights(
                                 m_ref_ratio[level - 1][direction]);
                             int const first =

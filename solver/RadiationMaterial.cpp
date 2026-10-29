@@ -7,6 +7,7 @@
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Reduce.H>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -129,11 +130,13 @@ rm_opacity (RMPhysics const& p, Real kappa, Real t) noexcept
 
 // k = d/dT [sigma (T^4 - E)].  k < 0 where absorption heating raises the
 // opacity enough to run away (opacity_power < 0 with E > T^4, or > 4 with
-// E < T^4).
+// E < T^4).  Zero below the rm_positive floor, where the residual does not
+// depend on T (as in eliminate()).
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_coupling (RMPhysics const& p, Real kappa, Real e, Real t) noexcept
 {
-    Real const tc = rm_positive(t);
+    if (!(t > Real(1.e-6))) { return Real(0); }
+    Real const tc = t;
     Real const sigma = rm_opacity(p, kappa, tc);
     Real const t3 = tc * tc * tc;
     return -p.opacity_power * sigma / tc * (tc * t3 - e) +
@@ -523,6 +526,8 @@ struct RadiationMaterialSolver::Impl
     // coupled_residual_norm at the accepted state, if attempt_step already
     // evaluated it there; negative otherwise.
     Real accepted_coupled_residual = Real(-1);
+    // Lag iterations in this step, over all attempts (like step_nonlinear).
+    int step_lag = 0;
 
     LevelData kappa;
     LevelData old_energy;      // E^n
@@ -785,6 +790,9 @@ struct RadiationMaterialSolver::Impl
         RMPhysics const p = physics;
         Real const inverse_dt = Real(1) / p.dt;
         int constexpr maximum_iterations = 100;
+        // Relative; 1e-13 in double, a few ulps in single precision.
+        Real constexpr tolerance = std::max(
+            Real(1.e-13), Real(100) * std::numeric_limits<Real>::epsilon());
         ReduceOps<ReduceOpMax, ReduceOpMin> reduce_op;
         ReduceData<int, int> reduce_data(reduce_op);
         using Tuple = typename decltype(reduce_data)::Type;
@@ -832,20 +840,29 @@ struct RadiationMaterialSolver::Impl
                     Real lo = x;
                     Real hi = x;
                     int expansions = 0;
-                    if (g(x) <= Real(0)) {
-                        while (g(hi) < Real(0) && expansions < 200) {
+                    Real g_lo = g(x);
+                    Real g_hi = g_lo;
+                    if (g_lo <= Real(0)) {
+                        while (g_hi < Real(0) && expansions < 200) {
                             lo = hi;
+                            g_lo = g_hi;
                             hi *= Real(2);
+                            g_hi = g(hi);
                             ++expansions;
                         }
                     } else {
-                        while (g(lo) > Real(0) && expansions < 200) {
+                        while (g_lo > Real(0) && expansions < 200) {
                             hi = lo;
+                            g_hi = g_lo;
                             lo *= Real(0.5);
+                            g_lo = g(lo);
                             ++expansions;
                         }
                     }
-                    if (expansions >= 200) { return {0, 0}; }
+                    // No bracket, or a NaN (which fails both tests).
+                    if (!(g_lo <= Real(0) && g_hi >= Real(0))) {
+                        return {0, 0};
+                    }
                     int iterations = 0;
                     bool converged = lo == hi;
                     while (!converged && iterations < maximum_iterations) {
@@ -859,7 +876,7 @@ struct RadiationMaterialSolver::Impl
                         if (gx < Real(0)) { lo = x; } else { hi = x; }
                         if (gp > Real(0)) {
                             Real const step = -gx / gp;
-                            if (std::abs(step) <= Real(1.e-13) * x) {
+                            if (std::abs(step) <= tolerance * x) {
                                 x += step;
                                 converged = true;
                                 break;
@@ -870,7 +887,7 @@ struct RadiationMaterialSolver::Impl
                             }
                         }
                         x = Real(0.5) * (lo + hi);
-                        converged = hi - lo <= Real(1.e-13) * hi;
+                        converged = hi - lo <= tolerance * hi;
                     }
                     out(i, j, kk) = x;
                     if (tau) {
@@ -1785,15 +1802,13 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         NewtonKrylovSolver<ReducedProblem> newton(problem, inner);
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
+        ++step_lag;
         if (!result.converged) {
             return fail(problem.failed()
                             ? "Cell-local material solve did not converge"
                             : "Lagged inner Newton-Krylov did not converge");
         }
     }
-    counters.lag_iterations += lag;
-    counters.maximum_lag_iterations =
-        amrex::max(counters.maximum_lag_iterations, lag);
     return true;
 }
 
@@ -1825,6 +1840,7 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
                                        clone_level_data(state.temperature)};
     int step_nonlinear = 0;
     accepted_coupled_residual = Real(-1);
+    step_lag = 0;
     for (int attempt = 0; attempt < 2; ++attempt) {
         bool const fallback = attempt == 1;
         if (fallback) {
@@ -1845,6 +1861,9 @@ RadiationMaterialSolver::Impl::advance (RadiationMaterialState& state,
     counters.nonlinear += step_nonlinear;
     counters.maximum_nonlinear =
         amrex::max(counters.maximum_nonlinear, step_nonlinear);
+    counters.lag_iterations += step_lag;
+    counters.maximum_lag_iterations =
+        amrex::max(counters.maximum_lag_iterations, step_lag);
     // coupled_residual_norm averages down its work copies, so the
     // average_down above does not change it.
     counters.final_coupled_residual =
