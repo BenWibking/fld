@@ -143,6 +143,53 @@ rm_coupling (RMPhysics const& p, Real kappa, Real e, Real t) noexcept
            Real(4) * sigma * t3;
 }
 
+// The data of one cell's material equation g(T) = 0 (see
+// rm_material_residual); E is clamped at zero.
+struct RMCellData
+{
+    Real kappa;
+    Real energy;
+    Real work; // v . (lagged flux)
+    Real old_temperature;
+    Real source;
+};
+
+// g(T) = (T - T^n)/dt - sigma (E - T^4) + 2 sigma work - S_T, and dg/dT in
+// `slope`.  sigma and T^4 are flat below the rm_positive floor.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
+rm_material_residual (RMPhysics const& p, Real inverse_dt,
+                      RMCellData const& c, Real temperature,
+                      Real& slope) noexcept
+{
+    Real const tp = rm_positive(temperature);
+    Real const sigma = rm_opacity(p, c.kappa, temperature);
+    Real const dsigma = temperature > Real(1.e-6)
+        ? -p.opacity_power * sigma / tp : Real(0);
+    Real const t4 = rm_fourth(tp);
+    Real const dt4 = temperature > Real(1.e-6)
+        ? Real(4) * tp * tp * tp : Real(0);
+    slope = inverse_dt - dsigma * (c.energy - t4) + sigma * dt4 +
+            Real(2) * dsigma * c.work;
+    return inverse_dt * (temperature - c.old_temperature) -
+           sigma * (c.energy - t4) + Real(2) * sigma * c.work - c.source;
+}
+
+// dT/dE = -g_E/g_T at the root x, with g_E = -sigma(T).  tau enters the
+// reaction coefficient (1 + tau)/dt of the ReducedProblem preconditioner
+// and of the quasi-Newton linear solve, which AMG needs positive.  Where
+// g_T lies in [-sigma, 0] (runaway opacity) 1 + tau is nonpositive or
+// infinite, so drop the derivative there; it is exact everywhere else.
+// NaN g_T gives 0.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
+rm_temperature_derivative (RMPhysics const& p, Real inverse_dt,
+                           RMCellData const& c, Real x) noexcept
+{
+    Real gp;
+    rm_material_residual(p, inverse_dt, c, x, gp);
+    Real const sigma = rm_opacity(p, c.kappa, x);
+    return gp > Real(0) || gp < -sigma ? sigma / gp : Real(0);
+}
+
 // Levermore-Pomraning flux limiter lambda(R).
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE Real
 rm_levermore (Real r) noexcept
@@ -811,26 +858,16 @@ struct RadiationMaterialSolver::Impl
                 reduce_op.eval(mfi.validbox(), reduce_data,
                 [=] AMREX_GPU_DEVICE (int i, int j, int kk) noexcept -> Tuple
                 {
-                    Real const ec = amrex::max(ea(i, j, kk), Real(0));
-                    Real const kc = ka(i, j, kk);
                     GpuArray<Real, 3> const lagged_flux{
                         lag(i, j, kk, 0), lag(i, j, kk, 1), lag(i, j, kk, 2)};
-                    Real const work = rm_dot(p.velocity, lagged_flux);
-                    // g(T) and dg/dT.
+                    RMCellData const cell{
+                        ka(i, j, kk), amrex::max(ea(i, j, kk), Real(0)),
+                        rm_dot(p.velocity, lagged_flux), to(i, j, kk),
+                        st(i, j, kk)};
                     auto evaluate = [&] (Real temperature,
                                          Real& slope) -> Real {
-                        Real const tp = rm_positive(temperature);
-                        Real const sigma = rm_opacity(p, kc, temperature);
-                        Real const dsigma = temperature > Real(1.e-6)
-                            ? -p.opacity_power * sigma / tp : Real(0);
-                        Real const t4 = rm_fourth(tp);
-                        Real const dt4 = temperature > Real(1.e-6)
-                            ? Real(4) * tp * tp * tp : Real(0);
-                        slope = inverse_dt - dsigma * (ec - t4) +
-                                sigma * dt4 + Real(2) * dsigma * work;
-                        return inverse_dt * (temperature - to(i, j, kk)) -
-                               sigma * (ec - t4) + Real(2) * sigma * work -
-                               st(i, j, kk);
+                        return rm_material_residual(p, inverse_dt, cell,
+                                                    temperature, slope);
                     };
                     auto g = [&] (Real temperature) -> Real {
                         Real unused;
@@ -891,20 +928,8 @@ struct RadiationMaterialSolver::Impl
                     }
                     out(i, j, kk) = x;
                     if (tau) {
-                        // dT/dE = -g_E/g_T with g_E = -sigma(T).  tau
-                        // enters the reaction coefficient (1 + tau)/dt of
-                        // the ReducedProblem preconditioner and of the
-                        // quasi-Newton linear solve, which AMG needs
-                        // positive.  Where g_T lies in [-sigma, 0]
-                        // (runaway opacity) 1 + tau is nonpositive or
-                        // infinite, so drop the derivative there; it is
-                        // exact everywhere else.  NaN g_T gives 0.
-                        Real gp;
-                        evaluate(x, gp);
-                        Real const sigma = rm_opacity(p, kc, x);
-                        tau(i, j, kk) = gp > Real(0) || gp < -sigma
-                                            ? sigma / gp
-                                            : Real(0);
+                        tau(i, j, kk) =
+                            rm_temperature_derivative(p, inverse_dt, cell, x);
                     }
                     return {iterations, converged ? 1 : 0};
                 });
@@ -918,6 +943,39 @@ struct RadiationMaterialSolver::Impl
         counters.maximum_local_iterations =
             amrex::max(counters.maximum_local_iterations, iterations);
         return all_converged != 0;
+    }
+
+    // eliminate()'s dT/dE without the solve, for an eliminated_temperature
+    // that is already T(E) for the E in `energy`.
+    void eliminated_derivative ()
+    {
+        BL_PROFILE("FLD::rm_eliminated_derivative");
+        RMPhysics const p = physics;
+        Real const inverse_dt = Real(1) / p.dt;
+        for (int level = 0; level < levels(); ++level) {
+            for (MFIter mfi(*eliminated_temperature[level]); mfi.isValid();
+                 ++mfi) {
+                auto const ea = energy[level]->const_array(mfi);
+                auto const ka = kappa[level]->const_array(mfi);
+                auto const to = old_temperature[level]->const_array(mfi);
+                auto const st = source_temperature[level]->const_array(mfi);
+                auto const lag = lagged_flux[level]->const_array(mfi);
+                auto const x = eliminated_temperature[level]->const_array(mfi);
+                auto const tau = temperature_derivative[level]->array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int kk) noexcept
+                {
+                    GpuArray<Real, 3> const lagged_flux{
+                        lag(i, j, kk, 0), lag(i, j, kk, 1), lag(i, j, kk, 2)};
+                    RMCellData const cell{
+                        ka(i, j, kk), amrex::max(ea(i, j, kk), Real(0)),
+                        rm_dot(p.velocity, lagged_flux), to(i, j, kk),
+                        st(i, j, kk)};
+                    tau(i, j, kk) = rm_temperature_derivative(
+                        p, inverse_dt, cell, x(i, j, kk));
+                });
+            }
+        }
     }
 
     // Smallest 1/|k| over uncovered cells with k < 0 (rm_coupling); the
@@ -954,6 +1012,12 @@ struct RadiationMaterialSolver::Impl
     Real coupled_residual_norm (LevelData const& e, LevelData const& t)
     {
         load_state(e, t);
+        return loaded_coupled_residual_norm(e, t);
+    }
+
+    // coupled_residual_norm with (e, t) already loaded.
+    Real loaded_coupled_residual_norm (LevelData const& e, LevelData const& t)
+    {
         evaluate_residual(WorkCoupling::Current);
         Real const es = scale(e, options.energy_scale_floor);
         Real const ts = scale(t, options.temperature_scale_floor);
@@ -1133,6 +1197,48 @@ rm_all_ranks (bool local)
     return result != 0;
 }
 
+// max(|E' - E| / E scale, |T' - T| / T scale) over uncovered valid cells,
+// each scale the field's maximum (at least `floor`) as in Impl::scale, in
+// one pass and one reduction.
+Real
+rm_scaled_change (LevelData const& next_energy, LevelData const& energy,
+                  Real energy_floor, LevelData const& next_temperature,
+                  LevelData const& temperature, Real temperature_floor,
+                  Vector<iMultiFab> const& masks)
+{
+    AMREX_ALWAYS_ASSERT(energy.size() == masks.size() &&
+                        next_energy.size() == masks.size() &&
+                        temperature.size() == masks.size() &&
+                        next_temperature.size() == masks.size());
+    ReduceOps<ReduceOpMax, ReduceOpMax, ReduceOpMax, ReduceOpMax> reduce_op;
+    ReduceData<Real, Real, Real, Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    Real const low = std::numeric_limits<Real>::lowest();
+    for (int level = 0; level < static_cast<int>(masks.size()); ++level) {
+        for (MFIter mfi(*energy[level]); mfi.isValid(); ++mfi) {
+            auto const en = next_energy[level]->const_array(mfi);
+            auto const e = energy[level]->const_array(mfi);
+            auto const tn = next_temperature[level]->const_array(mfi);
+            auto const t = temperature[level]->const_array(mfi);
+            auto const mask = masks[level].const_array(mfi);
+            reduce_op.eval(mfi.validbox(), reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+            {
+                if (!mask(i, j, k)) { return {Real(0), low, Real(0), low}; }
+                return {amrex::Math::abs(en(i, j, k) - e(i, j, k)), e(i, j, k),
+                        amrex::Math::abs(tn(i, j, k) - t(i, j, k)),
+                        t(i, j, k)};
+            });
+        }
+    }
+    auto const values = reduce_data.value(reduce_op);
+    Real result[4] = {amrex::get<0>(values), amrex::get<1>(values),
+                      amrex::get<2>(values), amrex::get<3>(values)};
+    ParallelDescriptor::ReduceRealMax(result, 4);
+    return amrex::max(result[0] / amrex::max(result[1], energy_floor),
+                      result[2] / amrex::max(result[3], temperature_floor));
+}
+
 // Sum local dot products over ranks in one reduction, then divide by the
 // norm scale.
 void
@@ -1170,40 +1276,36 @@ class ReducedProblem
           m_scale(impl.scale(initial, impl.options.energy_scale_floor))
     {}
 
-    // Fails, leaving the preconditioner unset, if a cell-local solve fails:
-    // tau is then not written in those cells.
+    // NewtonKrylovSolver calls this right after residual(e), so T(E) is
+    // already in eliminated_temperature and (E, T(E)) is loaded: only
+    // dT/dE is left to compute.
     bool prepare (State const& e)
     {
         BL_PROFILE("FLD::rm_reduced_prepare");
         m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
-        if (!m_impl.eliminate(e, true)) {
-            m_failed = true;
-            return false;
-        }
+        m_impl.eliminated_derivative();
+        setup_preconditioner();
+        return true;
+    }
+
+    // prepare() for an E whose T(E) has not been evaluated.  Fails, leaving
+    // the preconditioner unset, if a cell-local solve fails: tau is then
+    // not written in those cells.
+    bool prepare_unsolved (State const& e)
+    {
+        BL_PROFILE("FLD::rm_reduced_prepare");
+        m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
+        if (!m_impl.eliminate(e, true)) { return false; }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
-        Real const inverse_dt = Real(1) / m_impl.physics.dt;
-        for (int level = 0; level < m_impl.levels(); ++level) {
-            for (MFIter mfi(*m_impl.acoef[level]); mfi.isValid(); ++mfi) {
-                auto const tau =
-                    m_impl.temperature_derivative[level]->const_array(mfi);
-                auto const a = m_impl.acoef[level]->array(mfi);
-                ParallelFor(mfi.validbox(),
-                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                {
-                    a(i, j, k) = inverse_dt * (Real(1) + tau(i, j, k));
-                });
-            }
-        }
-        m_impl.setup_solver();
+        setup_preconditioner();
         return true;
     }
 
     // R(E) is undefined where the cell-local solves fail: the residual is
-    // then NaN, which the line search rejects.  A failure in prepare()
-    // fails every later residual.
+    // then NaN, which the line search rejects.
     void residual (State const& e, State& output)
     {
-        if (m_failed || !m_impl.eliminate(e, false)) {
+        if (!m_impl.eliminate(e, false)) {
             set_level_data(output, std::numeric_limits<Real>::quiet_NaN());
             return;
         }
@@ -1212,9 +1314,6 @@ class ReducedProblem
         lincomb_level_data(output, Real(1), m_impl.residual_energy, Real(1),
                            m_impl.residual_temperature);
     }
-
-    // Whether a prepare() elimination failed.
-    [[nodiscard]] bool failed () const { return m_failed; }
 
     // The norm scale, set from the last prepared state.
     [[nodiscard]] Real norm_scale () const { return m_scale; }
@@ -1301,9 +1400,28 @@ class ReducedProblem
     }
 
   private:
+    // Reaction coefficient (1 + dT/dE)/dt, then the AMG setup at the
+    // loaded state.
+    void setup_preconditioner ()
+    {
+        Real const inverse_dt = Real(1) / m_impl.physics.dt;
+        for (int level = 0; level < m_impl.levels(); ++level) {
+            for (MFIter mfi(*m_impl.acoef[level]); mfi.isValid(); ++mfi) {
+                auto const tau =
+                    m_impl.temperature_derivative[level]->const_array(mfi);
+                auto const a = m_impl.acoef[level]->array(mfi);
+                ParallelFor(mfi.validbox(),
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                {
+                    a(i, j, k) = inverse_dt * (Real(1) + tau(i, j, k));
+                });
+            }
+        }
+        m_impl.setup_solver();
+    }
+
     Impl& m_impl;
     Real m_scale = Real(1);
-    bool m_failed = false;
 };
 
 // Coupled (E, T) Newton-Krylov.  The preconditioner eliminates the
@@ -1642,12 +1760,10 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
         // Changes are measured against the norm scale, like the residual: a
         // relative change per cell stalls at round-off in cells far below
         // the scale (e.g. ahead of a radiation front).
-        Real const change = amrex::max(
-            composite_maximum_difference(next_energy, state.energy, masks_) /
-                scale(state.energy, options.energy_scale_floor),
-            composite_maximum_difference(next_temperature, state.temperature,
-                                         masks_) /
-                scale(state.temperature, options.temperature_scale_floor));
+        Real const change = rm_scaled_change(
+            next_energy, state.energy, options.energy_scale_floor,
+            next_temperature, state.temperature,
+            options.temperature_scale_floor, masks_);
         lincomb_level_data(state.energy, Real(0.3), state.energy, Real(0.7),
                            next_energy);
         lincomb_level_data(state.temperature, Real(0.3), state.temperature,
@@ -1713,12 +1829,13 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         Real change = std::numeric_limits<Real>::max();
         ReducedProblem problem(*this, state.energy);
         for (int iteration = 0;; ++iteration) {
-            if (!problem.prepare(state.energy)) {
+            if (!problem.prepare_unsolved(state.energy)) {
                 return fail("Cell-local material solve did not converge");
             }
             copy_level_data(state.temperature, eliminated_temperature);
+            // prepare_unsolved() loaded (E, T(E)).
             Real const unlagged =
-                coupled_residual_norm(state.energy, state.temperature);
+                loaded_coupled_residual_norm(state.energy, state.temperature);
             if (unlagged <= tolerance && change <= tolerance) {
                 counters.final_change = change;
                 accepted_coupled_residual = unlagged;
@@ -1727,8 +1844,15 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
             if (iteration == options.maximum_quasi_newton_iterations) {
                 return fail("Quasi-Newton iteration did not converge");
             }
-            if (physics.moving) { freeze_work_flux(); }
-            problem.residual(state.energy, rhs);
+            if (physics.moving) {
+                // The re-frozen work flux changes T(E).
+                freeze_work_flux();
+                problem.residual(state.energy, rhs);
+            } else {
+                // Without motion the lagged residual is the current one.
+                lincomb_level_data(rhs, Real(1), residual_energy, Real(1),
+                                   residual_temperature);
+            }
             problem.scale(rhs, Real(-1));
             set_level_data(correction, Real(0));
             auto const info = solver.solve(get_level_ptrs(correction),
@@ -1762,9 +1886,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
         if (!result.converged) {
-            return fail(problem.failed()
-                            ? "Cell-local material solve did not converge"
-                            : "Reduced Newton-Krylov did not converge");
+            return fail("Reduced Newton-Krylov did not converge");
         }
         if (!eliminate(state.energy, false)) {
             return fail("Cell-local material solve did not converge");
@@ -1804,9 +1926,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         rm_record_newton(counters, result, step_nonlinear);
         ++step_lag;
         if (!result.converged) {
-            return fail(problem.failed()
-                            ? "Cell-local material solve did not converge"
-                            : "Lagged inner Newton-Krylov did not converge");
+            return fail("Lagged inner Newton-Krylov did not converge");
         }
     }
     return true;
