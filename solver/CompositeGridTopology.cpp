@@ -725,6 +725,7 @@ CompositeGridTopology::buildPattern ()
         connection.matrix_slot =
             static_cast<Long>(found - m_col_index.begin());
     }
+    m_cf_slot.assign(m_col_index.size(), 0);
     for (auto const& flux : m_cf_fluxes) {
         auto const first = m_col_index.begin() + m_row_offset[flux.local_row];
         auto const last =
@@ -735,6 +736,7 @@ CompositeGridTopology::buildPattern ()
             auto const found = std::lower_bound(first, last, entry.column);
             AMREX_ALWAYS_ASSERT(found != last && *found == entry.column);
             entry.matrix_slot = static_cast<Long>(found - m_col_index.begin());
+            m_cf_slot[entry.matrix_slot] = 1;
         }
     }
 }
@@ -929,8 +931,7 @@ CompositeGridTopology::assemble (
                 maximum_offdiag = amrex::max(maximum_offdiag, value);
                 // The Hypre stencil's interpolation has negative weights.
                 AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                    value <= Real(1.e-14) ||
-                        m_cf_stencil == CoarseFineStencil::Hypre,
+                    value <= Real(1.e-14) || m_cf_slot[slot] != 0,
                     "CompositeGridTopology assembled a positive off-diagonal");
             }
         }

@@ -260,6 +260,9 @@ class CompositeGridTopology
     CoarseFineStencil m_cf_stencil = CoarseFineStencil::Hypre;
     amrex::Vector<CoarseFineFlux> m_cf_fluxes;
     amrex::Vector<StencilEntry> m_cf_entries;
+    // 1 for matrix slots that a coarse/fine stencil entry adds to; the
+    // Hypre interpolation weights can make those off-diagonals positive.
+    amrex::Vector<char> m_cf_slot;
     amrex::Vector<PhysicalFace> m_physical_faces;
     amrex::Gpu::PinnedVector<amrex::Long> m_row_offset;
     amrex::Gpu::PinnedVector<amrex::Long> m_col_index;
