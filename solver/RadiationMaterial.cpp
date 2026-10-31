@@ -480,6 +480,10 @@ struct RadiationMaterialSolver::Impl
           robin_f(make_cell_data(a_hierarchy, 1, 1)),
           robin_zero(make_cell_data(a_hierarchy, 1, 1)),
           zero(make_cell_data(a_hierarchy, 1, 0)),
+          update_correction(make_cell_data(a_hierarchy, 1, 1)),
+          update_rhs(make_cell_data(a_hierarchy, 1, 0)),
+          next_energy(make_cell_data(a_hierarchy, 1, 0)),
+          next_temperature(make_cell_data(a_hierarchy, 1, 0)),
           bcoef(make_face_data(a_hierarchy))
     {
         // Linear-solve failures fail the step attempt; see attempt_step.
@@ -524,6 +528,7 @@ struct RadiationMaterialSolver::Impl
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
                 hierarchy.geom[0].isAllPeriodic() && levels() == 1,
                 "A nonzero velocity needs a periodic domain and one level");
+            advection_work = make_cell_data(hierarchy, 1, 1);
         }
         physics.opacity_power = options.opacity_power;
         {
@@ -612,6 +617,14 @@ struct RadiationMaterialSolver::Impl
     LevelData robin_f;
     LevelData robin_zero;
     LevelData zero;
+    // Scratch for the predictor and quasi-Newton iterations (which never
+    // run at the same time) and for explicit material advection, allocated
+    // once instead of on every iteration.
+    LevelData update_correction;
+    LevelData update_rhs;
+    LevelData next_energy;
+    LevelData next_temperature;
+    LevelData advection_work;  // only with a moving medium
     FaceData bcoef;            // face D of the loaded state
 
     [[nodiscard]] int levels () const
@@ -1138,7 +1151,7 @@ struct RadiationMaterialSolver::Impl
                          "dt * sum |v_d|/dx_d <= 1; it is " +
                          std::to_string(courant) + ". Reduce dt.");
         }
-        auto work = make_cell_data(hierarchy, 1, 1);
+        auto& work = advection_work;
         copy_level_data(work, t);
         work[0]->FillBoundary(hierarchy.geom[0].periodicity());
         for (MFIter mfi(*t[0]); mfi.isValid(); ++mfi) {
@@ -1789,8 +1802,8 @@ bool
 RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
 {
     BL_PROFILE("FLD::rm_predictors");
-    auto correction = make_cell_data(hierarchy, 1, 1);
-    auto rhs = make_cell_data(hierarchy, 1, 0);
+    auto& correction = update_correction;
+    auto& rhs = update_rhs;
     Real const inverse_dt = Real(1) / physics.dt;
     for (int predictor = 0; predictor < 20; ++predictor) {
         load_state(state.energy, state.temperature);
@@ -1818,12 +1831,12 @@ RadiationMaterialSolver::Impl::predictors (RadiationMaterialState& state)
                                        linear_tolerance(), Real(0));
         record_solve(counters.summary, info);
         if (!info.converged) { return false; }
-        auto next_energy = clone_level_data(state.energy);
+        copy_level_data(next_energy, state.energy);
         saxpy_level_data(next_energy, Real(1), correction);
 
         load_state(next_energy, state.temperature);
         evaluate_residual(WorkCoupling::Current);
-        auto next_temperature = clone_level_data(state.temperature);
+        // Every valid cell of next_temperature is written below.
         for (int level = 0; level < levels(); ++level) {
             RMPhysics const p = level_physics(level);
             for (MFIter mfi(*next_temperature[level]); mfi.isValid(); ++mfi) {
@@ -1924,8 +1937,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         // iteration count matches a fresh elimination at half the cost.
         // (Freezing at the new E before the elimination instead costs ~15%
         // more iterations and loses round-off energy conservation.)
-        auto correction = make_cell_data(hierarchy, 1, 1);
-        auto rhs = make_cell_data(hierarchy, 1, 0);
+        auto& correction = update_correction;
+        auto& rhs = update_rhs;
         Real change = std::numeric_limits<Real>::max();
         ReducedProblem problem(*this);
         for (int iteration = 0;; ++iteration) {
@@ -1960,7 +1973,8 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
             if (!info.converged) {
                 return fail("Quasi-Newton linear solve did not converge");
             }
-            auto next = clone_level_data(state.energy);
+            auto& next = next_energy;
+            copy_level_data(next, state.energy);
             saxpy_level_data(next, Real(1), correction);
             average_down_hierarchy(next, hierarchy);
             // eliminate() clamps E at zero, so without this check a
