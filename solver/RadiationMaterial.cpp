@@ -1297,10 +1297,11 @@ using Impl = RadiationMaterialSolver::Impl;
 // Nonlinear elimination: Newton-Krylov on R(E) = R_E + R_T with T = T(E)
 // (the work term's flux lagged), preconditioned by one AMG cycle of
 // (1 + dT/dE)/dt - div D grad.  Advection and work terms are left out of
-// the preconditioner.  With clip_reaction (Newton-Krylov) the reaction
-// coefficient is at least 1/(2 dt), as in CoupledProblem: just below
-// g_T = -sigma, 1 + tau approaches zero and the AMG row becomes nearly
-// singular.  The quasi-Newton linear solve keeps the exact tau.
+// the preconditioner.  The reaction coefficient is at least 1/(2 dt), as
+// in CoupledProblem: just below g_T = -sigma, 1 + tau approaches zero and
+// the AMG row becomes nearly singular.  The quasi-Newton linear solve uses
+// the same floor, since a near-zero row there gives a huge, inadmissible
+// update.
 class ReducedProblem
 {
   public:
@@ -1309,10 +1310,9 @@ class ReducedProblem
 
     // The norm scale is set from the initial state, because the Newton
     // solver checks the initial residual before the first prepare().
-    ReducedProblem (Impl& impl, State const& initial, bool clip_reaction)
+    ReducedProblem (Impl& impl, State const& initial)
         : m_impl(impl),
-          m_scale(impl.scale(initial, impl.options.energy_scale_floor)),
-          m_clip_reaction(clip_reaction)
+          m_scale(impl.scale(initial, impl.options.energy_scale_floor))
     {}
 
     // True when the work fields still hold the last residual(), and it
@@ -1457,8 +1457,6 @@ class ReducedProblem
     void setup_preconditioner ()
     {
         Real const inverse_dt = Real(1) / m_impl.physics.dt;
-        Real const floor = m_clip_reaction
-            ? Real(0.5) : std::numeric_limits<Real>::lowest();
         for (int level = 0; level < m_impl.levels(); ++level) {
             for (MFIter mfi(*m_impl.acoef[level]); mfi.isValid(); ++mfi) {
                 auto const tau =
@@ -1468,7 +1466,7 @@ class ReducedProblem
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     a(i, j, k) = inverse_dt *
-                        amrex::max(Real(1) + tau(i, j, k), floor);
+                        amrex::max(Real(1) + tau(i, j, k), Real(0.5));
                 });
             }
         }
@@ -1477,7 +1475,6 @@ class ReducedProblem
 
     Impl& m_impl;
     Real m_scale = Real(1);
-    bool m_clip_reaction;
     // Impl::generation after the last successful residual(); -1 if none.
     long m_evaluated = -1;
 };
@@ -1920,7 +1917,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto correction = make_cell_data(hierarchy, 1, 1);
         auto rhs = make_cell_data(hierarchy, 1, 0);
         Real change = std::numeric_limits<Real>::max();
-        ReducedProblem problem(*this, state.energy, false);
+        ReducedProblem problem(*this, state.energy);
         for (int iteration = 0;; ++iteration) {
             if (!problem.prepare_unsolved(state.energy)) {
                 return fail("Cell-local material solve did not converge");
@@ -1972,7 +1969,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
 
     // ne_newton_krylov
     if (!physics.moving) {
-        ReducedProblem problem(*this, state.energy, true);
+        ReducedProblem problem(*this, state.energy);
         NewtonKrylovSolver<ReducedProblem> newton(problem, newton_options);
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
@@ -2025,7 +2022,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         // stall the lag just above it.
         inner.nonlinear_tolerance =
             Real(0.1) * amrex::max(tolerance, unlagged);
-        ReducedProblem problem(*this, state.energy, true);
+        ReducedProblem problem(*this, state.energy);
         NewtonKrylovSolver<ReducedProblem> newton(problem, inner);
         auto const result = newton.solve(state.energy);
         rm_record_newton(counters, result, step_nonlinear);
