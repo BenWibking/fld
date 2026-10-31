@@ -59,6 +59,56 @@ stage_multifab (MultiFab const& source, int nghost,
     return result;
 }
 
+// Robin data are staged together with their ghost cells, so a periodic
+// image of another box's ghost cell can land on an exterior ghost cell.
+// The staged exterior ghost cells (outside the domain across a
+// non-periodic face) must still equal the input's, which holds only if
+// the input agrees on every periodic image of them.  Debug builds only.
+void
+check_staged_robin ([[maybe_unused]] MultiFab const& staged,
+                    [[maybe_unused]] MultiFab const& source,
+                    [[maybe_unused]] Geometry const& geom)
+{
+#ifdef AMREX_DEBUG
+    Box const domain = geom.Domain();
+    GpuArray<int, AMREX_SPACEDIM> periodic{};
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        periodic[d] = geom.isPeriodic(d) ? 1 : 0;
+    }
+    int const ncomp = source.nComp();
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (MFIter mfi(staged); mfi.isValid(); ++mfi) {
+        auto const s = staged.const_array(mfi);
+        auto const in = source.const_array(mfi);
+        reduce_op.eval(mfi.fabbox(), reduce_data,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+        {
+            IntVect const g(AMREX_D_DECL(i, j, k));
+            bool exterior = false;
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                exterior = exterior || (periodic[d] == 0 &&
+                    (g[d] < domain.smallEnd(d) || g[d] > domain.bigEnd(d)));
+            }
+            Real difference = Real(0);
+            if (exterior) {
+                for (int n = 0; n < ncomp; ++n) {
+                    difference = amrex::max(difference,
+                                            std::abs(s(g, n) - in(g, n)));
+                }
+            }
+            return {difference};
+        });
+    }
+    Real difference = amrex::get<0>(reduce_data.value(reduce_op));
+    ParallelDescriptor::ReduceRealMax(difference);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        difference == Real(0),
+        "Robin data differ between periodic images of an exterior ghost cell");
+#endif
+}
+
 // Robin data for MLABecLaplacian, which reads them from the exterior ghost
 // cells like this wrapper does.
 std::unique_ptr<MultiFab>
@@ -71,6 +121,7 @@ stage_robin_coefficient (MultiFab const& source, Geometry const& geom)
     result->ParallelCopy(source, 0, 0, source.nComp(), IntVect(1), IntVect(1),
                          geom.periodicity());
     Gpu::streamSynchronize();
+    check_staged_robin(*result, source, geom);
     return result;
 }
 
@@ -629,6 +680,12 @@ struct MLABecLapAMG::Impl
                     *robin_input.b[level], 1, geom[level].periodicity());
                 robin_f[level] = stage_multifab(
                     *robin_input.f[level], 1, geom[level].periodicity());
+                check_staged_robin(*robin_a[level], *robin_input.a[level],
+                                   geom[level]);
+                check_staged_robin(*robin_b[level], *robin_input.b[level],
+                                   geom[level]);
+                check_staged_robin(*robin_f[level], *robin_input.f[level],
+                                   geom[level]);
             }
         }
 

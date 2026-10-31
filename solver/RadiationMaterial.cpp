@@ -227,7 +227,12 @@ rm_is_boundary_face (RMPhysics const& p, IntVect const& c, int d,
 // For a ghost cell g outside the domain across exactly one non-periodic
 // face, that face (2 d + side) and the boundary cell inside it; -1
 // otherwise.  Robin data live in these exterior ghost cells, one value per
-// face, so the faces of edge and corner cells are independent.
+// face, so the faces of edge and corner cells are independent.  Periodic
+// directions are ignored: a ghost cell also outside across a periodic face
+// is the periodic image of an exterior ghost cell, and must hold the same
+// data, because the solver copies Robin data together with their ghost
+// cells and a periodic shift can map one onto the other.  Its boundary cell
+// is then a periodic ghost cell, which FillBoundary fills.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE int
 rm_exterior_face (RMPhysics const& p, IntVect const& g, IntVect& inside) noexcept
 {
@@ -236,10 +241,10 @@ rm_exterior_face (RMPhysics const& p, IntVect const& g, IntVect& inside) noexcep
         int side = -1;
         if (g[d] < p.domain_lo[d]) { side = 0; }
         if (g[d] > p.domain_hi[d]) { side = 1; }
-        if (side < 0) { continue; }
-        if (face >= 0 || p.boundary[2 * d + side] == rm_periodic) {
-            return -1;
+        if (side < 0 || p.boundary[2 * d + side] == rm_periodic) {
+            continue;
         }
+        if (face >= 0) { return -1; }
         face = 2 * d + side;
     }
     if (face >= 0) {

@@ -360,6 +360,81 @@ run_mms (ParmParse& pp)
     }
 }
 
+// ---------------------------------------------------------------------
+// Robin faces beside periodic directions: a Marshak wave entering through
+// the Robin x faces, periodic in y and z, at rest, on several boxes.  The
+// solution does not depend on y or z, so any variation in those directions
+// means some boundary row saw the wrong Robin data.  Aborts on failure.
+// On CPU the residual reads the Robin data directly, so wrong staged data
+// would only weaken the preconditioner; debug builds check the staging
+// itself (check_staged_robin in MLABecAMG.cpp).
+
+void
+run_robin_periodic (ParmParse& pp)
+{
+    int n_cell = 16;
+    int steps = 3;
+    Real dt = Real(0.1);
+    std::string solver_name = "ne_newton_krylov";
+    pp.query("n_cell", n_cell);
+    pp.query("steps", steps);
+    pp.query("dt", dt);
+    pp.query("solver", solver_name);
+    auto const hierarchy = make_uniform_hierarchy(
+        n_cell, amrex::max(n_cell / 2, 4), {AMREX_D_DECL(0, 1, 1)});
+    RadiationMaterialOptions options;
+    options.solver = solver_name;
+    for (auto& boundary : options.boundary) {
+        boundary = RadiationBoundary::Periodic;
+    }
+    options.boundary[0] = RadiationBoundary::Robin;
+    options.boundary[1] = RadiationBoundary::Robin;
+    options.incoming[0] = Real(1);
+    options.incoming[1] = Real(0.25);
+    options.maximum_energy = Real(8);
+    RadiationMaterialSolver solver(hierarchy, options);
+    solver.set_opacity_coefficient(uniform_field(hierarchy, Real(10)));
+
+    RadiationMaterialState state = solver.make_state();
+    // Warm equilibrium start, E = T^4.
+    set_level_data(state.energy, Real(0.0625));
+    set_level_data(state.temperature, Real(0.5));
+    for (int step = 0; step < steps; ++step) {
+        solver.advance(state, dt);
+    }
+
+    // Largest difference between periodic neighbours in y or z.
+    auto energy = make_cell_data(hierarchy, 1, 1);
+    MultiFab::Copy(*energy[0], *state.energy[0], 0, 0, 1, 0);
+    energy[0]->FillBoundary(hierarchy.geom[0].periodicity());
+    ReduceOps<ReduceOpMax, ReduceOpMax> reduce_op;
+    ReduceData<Real, Real> reduce_data(reduce_op);
+    using Tuple = typename decltype(reduce_data)::Type;
+    for (MFIter mfi(*energy[0]); mfi.isValid(); ++mfi) {
+        auto const e = energy[0]->const_array(mfi);
+        reduce_op.eval(mfi.validbox(), reduce_data,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple
+        {
+            Real const d = amrex::max(std::abs(e(i, j, k) - e(i, j + 1, k)),
+                                      std::abs(e(i, j, k) - e(i, j, k + 1)));
+            return {d, e(i, j, k)};
+        });
+    }
+    auto const maxima = reduce_data.value(reduce_op);
+    Real r[2] = {amrex::get<0>(maxima), amrex::get<1>(maxima)};
+    ParallelDescriptor::ReduceRealMax(r, 2);
+    Real const variation = r[0] / r[1];
+    amrex::Print() << std::setprecision(10)
+                   << "Robin beside periodic: n=" << n_cell << ", steps="
+                   << steps << ", max E=" << r[1]
+                   << ", relative y/z variation=" << variation << '\n';
+    print_counters(solver_name, solver.counters(), 0.0);
+    Real const tolerance =
+        sizeof(Real) == sizeof(float) ? Real(1.e-4) : Real(1.e-10);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(variation <= tolerance,
+                                     "Robin beside periodic: E varies in y/z");
+}
+
 } // namespace
 
 void
@@ -368,12 +443,15 @@ run_moving_medium ()
     ParmParse pp("vc");
     std::string test = "pulse";
     pp.query("test", test);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(test == "pulse" || test == "mms",
-                                     "vc.test must be pulse or mms");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        test == "pulse" || test == "mms" || test == "robin_periodic",
+        "vc.test must be pulse, mms, or robin_periodic");
     if (test == "pulse") {
         run_pulse(pp);
-    } else {
+    } else if (test == "mms") {
         run_mms(pp);
+    } else {
+        run_robin_periodic(pp);
     }
 }
 

@@ -152,7 +152,11 @@ velocity `vc.velocity` (in units of c) and opacity
 `vc.sigma0 * T^-vc.opacity_power`; `vc.solver` selects the solver (default
 `newton_krylov`). `vc.test=pulse` advects an equilibrium temperature pulse;
 `vc.test=mms` runs a steady manufactured solution (requires `vc.limiter=0`;
-advection is upwind, so first order):
+advection is upwind, so first order). `vc.test=robin_periodic` is a
+regression check for Robin faces beside periodic directions: a Marshak wave
+at rest through Robin x faces, periodic in y and z, which aborts if E varies
+in y or z. Debug builds also check that the staged Robin data agree across
+periodic images of each exterior ghost cell.
 
 ```sh
 mpirun -np 4 ./main3d.gnu.MPI.ex vc_only=1 vc.test=pulse vc.solver=ne_newton_krylov
