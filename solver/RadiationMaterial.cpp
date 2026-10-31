@@ -1322,11 +1322,15 @@ class ReducedProblem
     // True when the work fields still hold the last residual(), and it
     // was at `e`: T(E) is in eliminated_temperature, (E, T(E)) is loaded,
     // and the lagged residual is in residual_energy/residual_temperature.
-    [[nodiscard]] bool evaluated_at (State const& e) const
+    // Only the generation is checked: callers pass the state of the last
+    // residual() (NewtonKrylovSolver's contract), and comparing the data
+    // would cost a global reduction per Newton step.  Debug builds check it.
+    [[nodiscard]] bool evaluated_at ([[maybe_unused]] State const& e) const
     {
-        return m_evaluated == m_impl.generation &&
-               composite_maximum_difference(e, m_impl.energy,
-                                            m_impl.masks_) == Real(0);
+        if (m_evaluated != m_impl.generation) { return false; }
+        AMREX_ASSERT(composite_maximum_difference(e, m_impl.energy,
+                                                  m_impl.masks_) == Real(0));
+        return true;
     }
 
     // NewtonKrylovSolver calls this right after residual(e), so only dT/dE
@@ -1564,15 +1568,17 @@ class CoupledProblem
     }
 
     // True when residual_energy/residual_temperature still hold the last
-    // residual(), and it was at `state`.
-    [[nodiscard]] bool evaluated_at (State const& state) const
+    // residual(), and it was at `state`.  As in ReducedProblem, only the
+    // generation is checked outside debug builds.
+    [[nodiscard]] bool evaluated_at ([[maybe_unused]] State const& state) const
     {
-        return m_evaluated == m_impl.generation &&
-               composite_maximum_difference(state.energy, m_impl.energy,
-                                            m_impl.masks_) == Real(0) &&
-               composite_maximum_difference(state.temperature,
-                                            m_impl.temperature,
-                                            m_impl.masks_) == Real(0);
+        if (m_evaluated != m_impl.generation) { return false; }
+        AMREX_ASSERT(composite_maximum_difference(state.energy, m_impl.energy,
+                                                  m_impl.masks_) == Real(0) &&
+                     composite_maximum_difference(state.temperature,
+                                                  m_impl.temperature,
+                                                  m_impl.masks_) == Real(0));
+        return true;
     }
 
     void residual (State const& state, State& output)
