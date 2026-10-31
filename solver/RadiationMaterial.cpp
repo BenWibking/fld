@@ -1307,6 +1307,217 @@ rm_scale (LevelData& field, Real a)
 
 using Impl = RadiationMaterialSolver::Impl;
 
+// The fields of a Newton state: E alone, or (E, T).
+template <class State> struct RMFields;
+
+template <> struct RMFields<LevelData>
+{
+    static constexpr int N = 1;
+    static Array<LevelData*, N> get (LevelData& s) { return {&s}; }
+    static Array<LevelData const*, N> get (LevelData const& s) { return {&s}; }
+    template <class F> static LevelData make (F&& field) { return field(0); }
+};
+
+template <> struct RMFields<RadiationMaterialState>
+{
+    static constexpr int N = 2;
+    static Array<LevelData*, N> get (RadiationMaterialState& s)
+    {
+        return {&s.energy, &s.temperature};
+    }
+    static Array<LevelData const*, N> get (RadiationMaterialState const& s)
+    {
+        return {&s.energy, &s.temperature};
+    }
+    template <class F> static RadiationMaterialState make (F&& field)
+    {
+        return {field(0), field(1)};
+    }
+};
+
+// The vector space NewtonKrylovSolver and GMRES work in: a state of N
+// fields, field i weighted by 1/scale_i^2 in the norm (scale_i set by the
+// problem).  Each norm, dot product, and change takes one reduction.
+template <class State>
+class RMScaledSpace
+{
+    using Fields = RMFields<State>;
+
+  public:
+    static constexpr int N = Fields::N;
+    using RT = Real;
+
+    State makeVecRHS () const
+    {
+        return Fields::make([&] (int) {
+            return make_cell_data(m_impl.hierarchy, 1, 0);
+        });
+    }
+    State makeVecLHS () const
+    {
+        return Fields::make([&] (int) {
+            return make_cell_data(m_impl.hierarchy, 1, 1);
+        });
+    }
+    State clone (State const& x) const
+    {
+        auto const xs = Fields::get(x);
+        return Fields::make([&] (int i) { return clone_level_data(*xs[i]); });
+    }
+
+    void assign (State& lhs, State const& rhs) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const r = Fields::get(rhs);
+        for (int i = 0; i < N; ++i) { copy_level_data(*l[i], *r[i]); }
+    }
+    void copy_state (State& lhs, State const& rhs) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const r = Fields::get(rhs);
+        for (int i = 0; i < N; ++i) {
+            copy_level_data_with_ghosts(*l[i], *r[i]);
+        }
+    }
+    void increment (State& lhs, State const& rhs, Real a) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const r = Fields::get(rhs);
+        for (int i = 0; i < N; ++i) { saxpy_level_data(*l[i], a, *r[i]); }
+    }
+    void linComb (State& lhs, Real a, State const& x, Real b,
+                  State const& y) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const xs = Fields::get(x);
+        auto const ys = Fields::get(y);
+        for (int i = 0; i < N; ++i) {
+            lincomb_level_data(*l[i], a, *xs[i], b, *ys[i]);
+        }
+    }
+    void scale (State& x, Real a) const
+    {
+        for (auto* field : Fields::get(x)) { rm_scale(*field, a); }
+    }
+    void setToZero (State& x) const
+    {
+        for (auto* field : Fields::get(x)) { set_level_data(*field, Real(0)); }
+    }
+
+    Real dotProduct (State const& lhs, State const& rhs) const
+    {
+        return norm2FromSquares(field_dots(lhs, rhs, true));
+    }
+    // All of a GMRES orthogonalization's dot products in one reduction:
+    // each local sum is weighted relative to field 0, then divided by
+    // scale_0^2.
+    void dotProducts (State const& lhs, Vector<State const*> const& basis,
+                      Vector<Real>& result) const
+    {
+        result.resize(basis.size());
+        for (std::size_t j = 0; j < basis.size(); ++j) {
+            auto const dots = field_dots(lhs, *basis[j], false);
+            Real sum = dots[0];
+            for (int i = 1; i < N; ++i) {
+                sum += (m_scales[0] * m_scales[0]) /
+                       (m_scales[i] * m_scales[i]) * dots[i];
+            }
+            result[j] = sum;
+        }
+        rm_reduce_dots(result, m_scales[0] * m_scales[0]);
+    }
+    Real norm2 (State const& x) const
+    {
+        return std::sqrt(amrex::max(dotProduct(x, x), Real(0)));
+    }
+    // Unweighted global sums of squares, one per field.
+    Array<Real, N> norm2Data (State const& x) const
+    {
+        return field_dots(x, x, true);
+    }
+    Real norm2FromData (Array<Real, N> const& sums) const
+    {
+        return std::sqrt(amrex::max(norm2FromSquares(sums), Real(0)));
+    }
+
+    void fill_candidate (State& candidate, State const& state,
+                         State const& correction, Real step_length) const
+    {
+        auto const c = Fields::get(candidate);
+        auto const s = Fields::get(state);
+        auto const d = Fields::get(correction);
+        for (int i = 0; i < N; ++i) {
+            rm_update(*c[i], *s[i], *d[i], step_length,
+                      m_impl.options.positive_update);
+            average_down_hierarchy(*c[i], m_impl.hierarchy);
+        }
+    }
+    bool admissible (State const& state) const
+    {
+        auto const s = Fields::get(state);
+        bool local = true;
+        for (int i = 0; i < N && local; ++i) {
+            local = rm_locally_admissible(*s[i], m_impl.masks_,
+                                          m_upper_bounds[i]);
+        }
+        return rm_all_ranks(local);
+    }
+    // Measured against the norm scales, like the residual (see
+    // Impl::predictors).
+    Real relative_change (State const& lhs, State const& rhs) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const r = Fields::get(rhs);
+        Array<Real, N> changes;
+        for (int i = 0; i < N; ++i) {
+            changes[i] = composite_maximum_difference(*l[i], *r[i],
+                                                      m_impl.masks_, true);
+        }
+        ParallelDescriptor::ReduceRealMax(changes.data(), N);
+        Real result = changes[0] / m_scales[0];
+        for (int i = 1; i < N; ++i) {
+            result = amrex::max(result, changes[i] / m_scales[i]);
+        }
+        return result;
+    }
+
+  protected:
+    RMScaledSpace (Impl& impl, Array<Real, N> const& upper_bounds)
+        : m_impl(impl), m_upper_bounds(upper_bounds)
+    {
+        m_scales.fill(Real(1));
+    }
+
+    Impl& m_impl;
+    Array<Real, N> m_scales;
+
+  private:
+    // Per-field sums of lhs * rhs on this rank, or over all ranks.
+    Array<Real, N> field_dots (State const& lhs, State const& rhs,
+                               bool reduce) const
+    {
+        auto const l = Fields::get(lhs);
+        auto const r = Fields::get(rhs);
+        Array<Real, N> dots;
+        for (int i = 0; i < N; ++i) {
+            dots[i] = composite_weighted_dot(*l[i], *r[i], m_impl.hierarchy,
+                                             m_impl.masks_, true);
+        }
+        if (reduce) { ParallelDescriptor::ReduceRealSum(dots.data(), N); }
+        return dots;
+    }
+    Real norm2FromSquares (Array<Real, N> const& sums) const
+    {
+        Real sum = Real(0);
+        for (int i = 0; i < N; ++i) {
+            sum += sums[i] / (m_scales[i] * m_scales[i]);
+        }
+        return sum;
+    }
+
+    Array<Real, N> m_upper_bounds; // admissible: 0 < field_i < bound_i
+};
+
 // Nonlinear elimination: Newton-Krylov on R(E) = R_E + R_T with T = T(E)
 // (the work term's flux lagged), preconditioned by one AMG cycle of
 // (1 + dT/dE)/dt - div D grad.  Advection and work terms are left out of
@@ -1315,22 +1526,24 @@ using Impl = RadiationMaterialSolver::Impl;
 // the AMG row becomes nearly singular.  The quasi-Newton linear solve uses
 // the same floor, since a near-zero row there gives a huge, inadmissible
 // update.
-class ReducedProblem
+class ReducedProblem : public RMScaledSpace<LevelData>
 {
   public:
     using State = LevelData;
-    using RT = Real;
 
     // The norm scale is set from the initial state, because the Newton
     // solver checks the initial residual before the first prepare().
     ReducedProblem (Impl& impl, State const& initial)
-        : m_impl(impl),
-          m_scale(impl.scale(initial, impl.options.energy_scale_floor))
-    {}
+        : ReducedProblem(impl)
+    {
+        m_scales[0] = impl.scale(initial, impl.options.energy_scale_floor);
+    }
 
     // For the quasi-Newton loop, which calls prepare_unsolved() (and so
     // sets the scale) before it uses any norm.
-    explicit ReducedProblem (Impl& impl) : m_impl(impl) {}
+    explicit ReducedProblem (Impl& impl)
+        : RMScaledSpace(impl, {impl.options.maximum_energy})
+    {}
 
     // True when the work fields still hold the last residual(), and it
     // was at `e`: T(E) is in eliminated_temperature, (E, T(E)) is loaded,
@@ -1353,7 +1566,7 @@ class ReducedProblem
     {
         if (!evaluated_at(e)) { return prepare_unsolved(e); }
         BL_PROFILE("FLD::rm_reduced_prepare");
-        m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
+        m_scales[0] = m_impl.scale(e, m_impl.options.energy_scale_floor);
         m_impl.eliminated_derivative();
         setup_preconditioner();
         return true;
@@ -1365,7 +1578,7 @@ class ReducedProblem
     bool prepare_unsolved (State const& e)
     {
         BL_PROFILE("FLD::rm_reduced_prepare");
-        m_scale = m_impl.scale(e, m_impl.options.energy_scale_floor);
+        m_scales[0] = m_impl.scale(e, m_impl.options.energy_scale_floor);
         if (!m_impl.eliminate(e, true)) { return false; }
         m_impl.load_loaded_energy(m_impl.eliminated_temperature);
         setup_preconditioner();
@@ -1389,87 +1602,18 @@ class ReducedProblem
     }
 
     // The norm scale, set from the last prepared state.
-    [[nodiscard]] Real norm_scale () const { return m_scale; }
+    [[nodiscard]] Real norm_scale () const { return m_scales[0]; }
 
     void linearized_residual (State const& e, State& output)
     {
         residual(e, output);
     }
 
-    State makeVecRHS () const { return make_cell_data(m_impl.hierarchy, 1, 0); }
-    State makeVecLHS () const { return make_cell_data(m_impl.hierarchy, 1, 1); }
-
     void precondition (State& output, State const& rhs)
     {
         set_level_data(output, Real(0));
         m_impl.solver.precondition(get_level_ptrs(output),
                                    get_level_const_ptrs(rhs));
-    }
-
-    void assign (State& lhs, State const& rhs) const { copy_level_data(lhs, rhs); }
-    void copy_state (State& lhs, State const& rhs) const
-    {
-        copy_level_data_with_ghosts(lhs, rhs);
-    }
-    Real dotProduct (State const& lhs, State const& rhs) const
-    {
-        return composite_weighted_dot(lhs, rhs, m_impl.hierarchy,
-                                      m_impl.masks_) / (m_scale * m_scale);
-    }
-    // All of a GMRES orthogonalization's dot products in one reduction.
-    void dotProducts (State const& lhs, Vector<State const*> const& basis,
-                      Vector<Real>& result) const
-    {
-        result.resize(basis.size());
-        for (std::size_t j = 0; j < basis.size(); ++j) {
-            result[j] = composite_weighted_dot(lhs, *basis[j],
-                                               m_impl.hierarchy,
-                                               m_impl.masks_, true);
-        }
-        rm_reduce_dots(result, m_scale * m_scale);
-    }
-    void increment (State& lhs, State const& rhs, Real a) const
-    {
-        saxpy_level_data(lhs, a, rhs);
-    }
-    void linComb (State& lhs, Real a, State const& x, Real b,
-                  State const& y) const
-    {
-        lincomb_level_data(lhs, a, x, b, y);
-    }
-    Real norm2 (State const& x) const
-    {
-        return std::sqrt(amrex::max(dotProduct(x, x), Real(0)));
-    }
-    Real norm2Data (State const& x) const
-    {
-        return composite_weighted_dot(x, x, m_impl.hierarchy, m_impl.masks_);
-    }
-    Real norm2FromData (Real sum) const
-    {
-        return std::sqrt(amrex::max(sum / (m_scale * m_scale), Real(0)));
-    }
-    void scale (State& x, Real a) const { rm_scale(x, a); }
-    void setToZero (State& x) const { set_level_data(x, Real(0)); }
-    State clone (State const& x) const { return clone_level_data(x); }
-    void fill_candidate (State& candidate, State const& state,
-                         State const& correction, Real step_length) const
-    {
-        rm_update(candidate, state, correction, step_length,
-                  m_impl.options.positive_update);
-        average_down_hierarchy(candidate, m_impl.hierarchy);
-    }
-    bool admissible (State const& state) const
-    {
-        return rm_all_ranks(rm_locally_admissible(
-            state, m_impl.masks_, m_impl.options.maximum_energy));
-    }
-    // Measured against the norm scale, like the residual (see
-    // Impl::predictors).
-    Real relative_change (State const& lhs, State const& rhs) const
-    {
-        return composite_maximum_difference(lhs, rhs, m_impl.masks_) /
-               m_scale;
     }
 
   private:
@@ -1494,8 +1638,6 @@ class ReducedProblem
         m_impl.setup_solver();
     }
 
-    Impl& m_impl;
-    Real m_scale = Real(1);
     // Impl::generation after the last successful residual(); -1 if none.
     long m_evaluated = -1;
 };
@@ -1512,29 +1654,24 @@ class ReducedProblem
 // max(k, 0) instead, the block inverse of a Jacobian without that
 // feedback; elsewhere it keeps the exact k, and the coefficient is at
 // least 1/(2 dt).  Newton still uses the true residual.
-class CoupledProblem
+class CoupledProblem : public RMScaledSpace<RadiationMaterialState>
 {
   public:
     using State = RadiationMaterialState;
-    using RT = Real;
 
     // Norm scales from the initial state; see ReducedProblem.
     CoupledProblem (Impl& impl, State const& initial)
-        : m_impl(impl),
-          m_energy_scale(impl.scale(initial.energy,
-                                    impl.options.energy_scale_floor)),
-          m_temperature_scale(impl.scale(
-              initial.temperature, impl.options.temperature_scale_floor)),
+        : RMScaledSpace(impl, {impl.options.maximum_energy,
+                               std::numeric_limits<Real>::max()}),
           m_energy_rhs(make_cell_data(impl.hierarchy, 1, 0))
-    {}
+    {
+        set_scales(initial);
+    }
 
     bool prepare (State const& state)
     {
         BL_PROFILE("FLD::rm_coupled_prepare");
-        m_energy_scale = m_impl.scale(state.energy,
-                                      m_impl.options.energy_scale_floor);
-        m_temperature_scale = m_impl.scale(
-            state.temperature, m_impl.options.temperature_scale_floor);
+        set_scales(state);
         // NewtonKrylovSolver calls this right after residual(state), which
         // already loaded the state.
         if (!evaluated_at(state)) {
@@ -1608,17 +1745,6 @@ class CoupledProblem
         residual(state, output);
     }
 
-    State makeVecRHS () const
-    {
-        return {make_cell_data(m_impl.hierarchy, 1, 0),
-                make_cell_data(m_impl.hierarchy, 1, 0)};
-    }
-    State makeVecLHS () const
-    {
-        return {make_cell_data(m_impl.hierarchy, 1, 1),
-                make_cell_data(m_impl.hierarchy, 1, 1)};
-    }
-
     void precondition (State& output, State const& rhs)
     {
         copy_level_data(m_energy_rhs, rhs.energy);
@@ -1656,122 +1782,15 @@ class CoupledProblem
         }
     }
 
-    void assign (State& lhs, State const& rhs) const
+  private:
+    void set_scales (State const& state)
     {
-        copy_level_data(lhs.energy, rhs.energy);
-        copy_level_data(lhs.temperature, rhs.temperature);
-    }
-    void copy_state (State& lhs, State const& rhs) const
-    {
-        copy_level_data_with_ghosts(lhs.energy, rhs.energy);
-        copy_level_data_with_ghosts(lhs.temperature, rhs.temperature);
-    }
-    Real dotProduct (State const& lhs, State const& rhs) const
-    {
-        return composite_weighted_dot(lhs.energy, rhs.energy,
-                                      m_impl.hierarchy, m_impl.masks_) /
-                   (m_energy_scale * m_energy_scale) +
-               composite_weighted_dot(lhs.temperature, rhs.temperature,
-                                      m_impl.hierarchy, m_impl.masks_) /
-                   (m_temperature_scale * m_temperature_scale);
-    }
-    // All of a GMRES orthogonalization's dot products in one reduction.
-    void dotProducts (State const& lhs, Vector<State const*> const& basis,
-                      Vector<Real>& result) const
-    {
-        Real const ratio = (m_energy_scale * m_energy_scale) /
-                           (m_temperature_scale * m_temperature_scale);
-        result.resize(basis.size());
-        for (std::size_t j = 0; j < basis.size(); ++j) {
-            result[j] =
-                composite_weighted_dot(lhs.energy, basis[j]->energy,
-                                       m_impl.hierarchy, m_impl.masks_,
-                                       true) +
-                ratio * composite_weighted_dot(lhs.temperature,
-                                               basis[j]->temperature,
-                                               m_impl.hierarchy,
-                                               m_impl.masks_, true);
-        }
-        rm_reduce_dots(result, m_energy_scale * m_energy_scale);
-    }
-    void increment (State& lhs, State const& rhs, Real a) const
-    {
-        saxpy_level_data(lhs.energy, a, rhs.energy);
-        saxpy_level_data(lhs.temperature, a, rhs.temperature);
-    }
-    void linComb (State& lhs, Real a, State const& x, Real b,
-                  State const& y) const
-    {
-        lincomb_level_data(lhs.energy, a, x.energy, b, y.energy);
-        lincomb_level_data(lhs.temperature, a, x.temperature, b,
-                           y.temperature);
-    }
-    Real norm2 (State const& x) const
-    {
-        return std::sqrt(amrex::max(dotProduct(x, x), Real(0)));
-    }
-    Array<Real, 2> norm2Data (State const& x) const
-    {
-        return {composite_weighted_dot(x.energy, x.energy, m_impl.hierarchy,
-                                       m_impl.masks_),
-                composite_weighted_dot(x.temperature, x.temperature,
-                                       m_impl.hierarchy, m_impl.masks_)};
-    }
-    Real norm2FromData (Array<Real, 2> const& sums) const
-    {
-        return std::sqrt(amrex::max(
-            sums[0] / (m_energy_scale * m_energy_scale) +
-                sums[1] / (m_temperature_scale * m_temperature_scale),
-            Real(0)));
-    }
-    void scale (State& x, Real a) const
-    {
-        rm_scale(x.energy, a);
-        rm_scale(x.temperature, a);
-    }
-    void setToZero (State& x) const
-    {
-        set_level_data(x.energy, Real(0));
-        set_level_data(x.temperature, Real(0));
-    }
-    State clone (State const& x) const
-    {
-        return {clone_level_data(x.energy), clone_level_data(x.temperature)};
-    }
-    void fill_candidate (State& candidate, State const& state,
-                         State const& correction, Real step_length) const
-    {
-        rm_update(candidate.energy, state.energy, correction.energy,
-                  step_length, m_impl.options.positive_update);
-        rm_update(candidate.temperature, state.temperature,
-                  correction.temperature, step_length,
-                  m_impl.options.positive_update);
-        average_down_hierarchy(candidate.energy, m_impl.hierarchy);
-        average_down_hierarchy(candidate.temperature, m_impl.hierarchy);
-    }
-    bool admissible (State const& state) const
-    {
-        // One global reduction for both fields.
-        return rm_all_ranks(
-            rm_locally_admissible(state.energy, m_impl.masks_,
-                                  m_impl.options.maximum_energy) &&
-            rm_locally_admissible(state.temperature, m_impl.masks_));
-    }
-    Real relative_change (State const& lhs, State const& rhs) const
-    {
-        return amrex::max(
-            composite_maximum_difference(lhs.energy, rhs.energy,
-                                         m_impl.masks_) /
-                m_energy_scale,
-            composite_maximum_difference(lhs.temperature, rhs.temperature,
-                                         m_impl.masks_) /
-                m_temperature_scale);
+        m_scales[0] = m_impl.scale(state.energy,
+                                   m_impl.options.energy_scale_floor);
+        m_scales[1] = m_impl.scale(state.temperature,
+                                   m_impl.options.temperature_scale_floor);
     }
 
-  private:
-    Impl& m_impl;
-    Real m_energy_scale = Real(1);
-    Real m_temperature_scale = Real(1);
     LevelData m_energy_rhs; // precondition() scratch
     // Impl::generation after the last residual(); -1 if none.
     long m_evaluated = -1;

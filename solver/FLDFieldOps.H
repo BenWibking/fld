@@ -72,9 +72,11 @@ get_face_const_ptrs (FaceData const& data);
 [[nodiscard]] amrex::Real composite_maximum (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);
 
+// With local_only, this rank's maximum, for a caller that reduces several
+// maxima at once.
 [[nodiscard]] amrex::Real composite_maximum_difference (
     LevelData const& lhs, LevelData const& rhs,
-    amrex::Vector<amrex::iMultiFab> const& masks);
+    amrex::Vector<amrex::iMultiFab> const& masks, bool local_only = false);
 
 [[nodiscard]] bool composite_all_finite (
     LevelData const& data, amrex::Vector<amrex::iMultiFab> const& masks);

@@ -363,7 +363,7 @@ composite_maximum (LevelData const& data, Vector<iMultiFab> const& masks)
 // Largest |lhs - rhs| over uncovered valid cells.
 Real
 composite_maximum_difference (LevelData const& lhs, LevelData const& rhs,
-                              Vector<iMultiFab> const& masks)
+                              Vector<iMultiFab> const& masks, bool local_only)
 {
     assert_compatible(lhs, rhs);
     AMREX_ALWAYS_ASSERT(lhs.size() == masks.size());
@@ -385,7 +385,7 @@ composite_maximum_difference (LevelData const& lhs, LevelData const& rhs,
         }
     }
     Real result = amrex::get<0>(reduce_data.value(reduce_op));
-    ParallelDescriptor::ReduceRealMax(result);
+    if (!local_only) { ParallelDescriptor::ReduceRealMax(result); }
     return result;
 }
 
