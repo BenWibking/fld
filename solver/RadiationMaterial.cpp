@@ -1315,6 +1315,10 @@ class ReducedProblem
           m_scale(impl.scale(initial, impl.options.energy_scale_floor))
     {}
 
+    // For the quasi-Newton loop, which calls prepare_unsolved() (and so
+    // sets the scale) before it uses any norm.
+    explicit ReducedProblem (Impl& impl) : m_impl(impl) {}
+
     // True when the work fields still hold the last residual(), and it
     // was at `e`: T(E) is in eliminated_temperature, (E, T(E)) is loaded,
     // and the lagged residual is in residual_energy/residual_temperature.
@@ -1917,7 +1921,7 @@ RadiationMaterialSolver::Impl::attempt_step (RadiationMaterialState& state,
         auto correction = make_cell_data(hierarchy, 1, 1);
         auto rhs = make_cell_data(hierarchy, 1, 0);
         Real change = std::numeric_limits<Real>::max();
-        ReducedProblem problem(*this, state.energy);
+        ReducedProblem problem(*this);
         for (int iteration = 0;; ++iteration) {
             if (!problem.prepare_unsolved(state.energy)) {
                 return fail("Cell-local material solve did not converge");
